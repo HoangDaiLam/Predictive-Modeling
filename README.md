@@ -1,7 +1,7 @@
 # Predictive-Modeling
 
-#Team members
-#Dai Lam Hoang
-#Minh Duy Nguyen
-#Hamza Sahqani
-#Duc Hieu Nguyen
+# Team members
+# Dai Lam Hoang
+# Minh Duy Nguyen
+# Hamza Sahqani
+# Duc Hieu Nguyen
