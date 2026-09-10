@@ -1,5 +1,7 @@
-# Predictive-Modeling
-
+# Predictive-Modeling 
+<p> 
+Responsible for investigating and implementing ML models. 
+</p>
 ## Team members
 1. Dai Lam Hoang
 2. Minh Duy Nguyen
