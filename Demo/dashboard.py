@@ -4,6 +4,36 @@
 MODULE: dashboard.py
 BƯỚC 5 — Dashboard giao diện người dùng (Streamlit)
 ================================================================================
+IN ENGLISH 
+Purpose:
+An intuitive interface that allows users to:
+1. Enter/select the Origin & Destination
+2. Enter winter weather conditions (temperature, which can be retrieved
+automatically via the API if a key is configured, or entered manually
+for offline demos)
+3. View real-time HVAC/BTMS parameters (cabin heating power,
+battery heating power, target temperature)
+4. View a comparison table of multiple routes and the route recommended
+as optimal by the AI Engine, along with an explanation
+
+How to run:
+streamlit run dashboard.py
+
+How the Dashboard communicates with the backend AI Engine:
+The Dashboard does NOT make separate HTTP API calls — it directly imports
+Python classes/functions from the 3 backend modules (vehicle_dynamics,
+winter_hvac, route_optimizer) within the SAME process (in-process call),
+because Streamlit runs as an independent Python application on the user's
+machine/internal server. This is a "monolithic Streamlit app" architecture
+— simple and suitable for demos/internal use.
+
+If you want to separate the Dashboard and AI Engine into 2 independent 
+services (for example: the backend running on a server and the dashboard 
+running on another machine), see the instructions in README.md under 
+"Extended Architecture with FastAPI" — there, the AI Engine is packaged 
+as a REST API using FastAPI, and the Dashboard communicates via 
+HTTP requests instead of direct imports. 
+ 
 Mục đích:
     Giao diện trực quan để người dùng:
         1. Nhập/chọn Điểm xuất phát (Origin) & Điểm đến (Destination)

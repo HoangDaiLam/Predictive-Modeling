@@ -303,10 +303,10 @@ class RouteOptimizationEngine:
         """
         lines = []
         lines.append(
-            f"✅ TUYẾN ĐƯỜNG TỐI ƯU: '{optimal.route_name}' — "
-            f"tiêu thụ {optimal.total_energy_kwh:.2f} kWh "
-            f"({optimal.battery_percent_consumed:.2f}% dung lượng pin khả dụng hiệu dụng "
-            f"{optimal.effective_usable_capacity_kwh:.1f} kWh)."
+            f"✅ Optimal Route Name/TUYẾN ĐƯỜNG TỐI ƯU: '{optimal.route_name}' — "
+            f"Optimal Total Energy/tiêu thụ {optimal.total_energy_kwh:.2f} kWh "
+            f"({optimal.battery_percent_consumed:.2f}% Battery Percent Consumed) "
+            f"Effective Usable Capacity: {optimal.effective_usable_capacity_kwh:.1f} kWh)."
         )
         lines.append(
             f"   - Quãng đường: {optimal.distance_km:.1f} km | Thời gian: {optimal.duration_min:.0f} phút"
