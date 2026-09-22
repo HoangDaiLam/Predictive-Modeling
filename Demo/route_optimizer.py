@@ -2,22 +2,22 @@
 """
 ================================================================================
 MODULE: route_optimizer.py
-BƯỚC 4 — Route Optimization Algorithm (AI Engine trung tâm)
+STEP 4 — Route Optimization Algorithm (core AI Engine)
 ================================================================================
-Mục đích:
-    Kết hợp 3 module đã xây dựng:
+Purpose:
+    Combine the 3 built modules:
         - vehicle_dynamics.py  (Polestar4Dynamics)
         - winter_hvac.py       (WinterHVACSimulation)
-        - api_integration.py   (dữ liệu route/elevation/weather)
-    để PHÂN TÍCH VÀ SO SÁNH nhiều tuyến đường khả dụng giữa điểm A và B,
-    từ đó chọn ra tuyến đường TỐI ƯU về năng lượng (tiêu thụ pin thấp nhất),
-    kèm giải thích chi tiết lý do lựa chọn.
+        - api_integration.py   (route/elevation/weather data)
+    to ANALYZE AND COMPARE multiple available routes between points A and B,
+    then select the OPTIMAL route in terms of energy consumption (lowest battery use),
+    with detailed reasoning for the selection.
 
-Kiến trúc dữ liệu:
-    RouteSegment: 1 đoạn nhỏ của tuyến đường (khoảng cách, tốc độ TB, độ dốc,
-                  nhiệt độ môi trường tại đoạn đó)
-    RouteCandidate: 1 tuyến đường hoàn chỉnh = danh sách nhiều RouteSegment
-    RouteAnalysisResult: kết quả phân tích chi tiết cho 1 tuyến đường
+Data architecture:
+    RouteSegment: a small section of the route (distance, average speed, grade,
+                  ambient temperature for that segment)
+    RouteCandidate: a complete route = list of many RouteSegment objects
+    RouteAnalysisResult: detailed analysis result for one route
 ================================================================================
 """
 
@@ -41,15 +41,15 @@ from api_integration import (
 
 
 # ============================================================================
-# CẤU TRÚC DỮ LIỆU TUYẾN ĐƯỜNG
+# ROUTE DATA STRUCTURES
 # ============================================================================
 @dataclass
 class RouteSegment:
-    """Một đoạn đường nhỏ với các thông số cần thiết để tính năng lượng."""
+    """A small road segment with the parameters needed to calculate energy use."""
     distance_m: float
     avg_speed_kmh: float
-    grade_percent: float          # độ dốc trung bình đoạn này (%), dương = lên dốc
-    ambient_temp_c: float         # nhiệt độ môi trường tại đoạn này (°C)
+    grade_percent: float          # average grade of this segment (%), positive = uphill
+    ambient_temp_c: float         # ambient temperature at this segment (°C)
 
     @property
     def avg_speed_mps(self) -> float:
@@ -68,10 +68,10 @@ class RouteSegment:
 
 @dataclass
 class RouteCandidate:
-    """Một tuyến đường hoàn chỉnh, ứng viên để so sánh."""
+    """A complete route, used as a candidate for comparison."""
     route_name: str
     segments: List[RouteSegment]
-    description: str = ""  # mô tả định tính (ví dụ: "Cao tốc trực tiếp", "Đường vòng tránh đèo")
+    description: str = ""  # qualitative description (for example: "Direct highway", "Detour avoiding steep grades")
 
     @property
     def total_distance_km(self) -> float:
@@ -83,7 +83,7 @@ class RouteCandidate:
 
     @property
     def total_elevation_gain_m(self) -> float:
-        """Tổng độ cao leo lên (chỉ tính các đoạn dốc lên, để mô tả 'độ dốc' tuyến)."""
+        """Total elevation gain (only uphill segments count, to describe the route grade profile)."""
         gain = 0.0
         for s in self.segments:
             if s.grade_percent > 0:
@@ -97,16 +97,16 @@ class RouteCandidate:
 
 @dataclass
 class RouteAnalysisResult:
-    """Kết quả phân tích năng lượng chi tiết cho MỘT tuyến đường."""
+    """Detailed energy analysis result for ONE route."""
     route_name: str
     description: str
     distance_km: float
     duration_min: float
-    driving_energy_kwh: float          # năng lượng do động lực học xe (Bước 1)
-    winter_overhead_kwh: float         # năng lượng do HVAC + BTMS (Bước 2)
-    total_energy_kwh: float            # tổng năng lượng tiêu thụ
-    battery_percent_consumed: float    # % pin tiêu thụ (trên dung lượng khả dụng hiệu dụng)
-    effective_usable_capacity_kwh: float  # dung lượng pin khả dụng SAU khi trừ capacity fade do lạnh
+    driving_energy_kwh: float          # energy from vehicle dynamics (Step 1)
+    winter_overhead_kwh: float         # energy from HVAC + BTMS (Step 2)
+    total_energy_kwh: float            # total energy consumption
+    battery_percent_consumed: float    # % battery used (based on effective usable capacity)
+    effective_usable_capacity_kwh: float  # usable battery capacity AFTER subtracting cold-related capacity fade
     avg_consumption_kwh_per_km: float
     max_grade_percent: float
     total_elevation_gain_m: float
@@ -114,14 +114,13 @@ class RouteAnalysisResult:
 
 
 # ============================================================================
-# ENGINE PHÂN TÍCH & TỐI ƯU TUYẾN ĐƯỜNG
+# ROUTE ANALYSIS & OPTIMIZATION ENGINE
 # ============================================================================
 class RouteOptimizationEngine:
     """
-    AI Engine trung tâm: nhận vào danh sách các tuyến đường ứng viên
-    (RouteCandidate), tính toán năng lượng tiêu thụ đầy đủ cho từng tuyến
-    (kết hợp vật lý xe + ảnh hưởng mùa đông), và đưa ra quyết định tuyến
-    đường tối ưu kèm giải thích.
+    Core AI Engine: receives a list of candidate routes (RouteCandidate),
+    calculates the full energy consumption for each route (combining vehicle physics
+    and winter effects), and selects the optimal route with an explanation.
     """
 
     def __init__(
@@ -137,28 +136,28 @@ class RouteOptimizationEngine:
         self.time_to_precondition_s = time_to_precondition_s
 
     # ------------------------------------------------------------------
-    # PHÂN TÍCH MỘT TUYẾN ĐƯỜNG DUY NHẤT
+    # ANALYZE ONE ROUTE
     # ------------------------------------------------------------------
     def analyze_route(self, route: RouteCandidate) -> RouteAnalysisResult:
         """
-        Tính toán chi tiết năng lượng tiêu thụ cho MỘT tuyến đường, bằng
-        cách lặp qua từng RouteSegment và:
+        Calculate detailed energy consumption for ONE route by iterating through each
+        RouteSegment and:
 
-        1. Dùng Polestar4Dynamics.compute_segment_energy_kwh() để tính năng
-           lượng động lực học thuần tuý (aero + rolling + grade), với khối
-           lượng riêng không khí (rho) được hiệu chỉnh theo nhiệt độ thực tế
-           của đoạn đường đó (khí lạnh đặc hơn -> aero drag cao hơn).
+        1. Use Polestar4Dynamics.compute_segment_energy_kwh() to calculate pure
+           vehicle dynamics energy (aero + rolling + grade), with air density (rho)
+           adjusted to the actual temperature of that segment (colder air is denser,
+           which increases aerodynamic drag).
 
-        2. Dùng WinterHVACSimulation.compute_total_winter_energy_overhead()
-           để tính năng lượng hao hụt do HVAC cabin + BTMS pin trong thời
-           gian di chuyển qua đoạn đó.
+        2. Use WinterHVACSimulation.compute_total_winter_energy_overhead() to
+           calculate the energy loss due to cabin HVAC + battery BTMS during travel
+           through that segment.
 
-        3. Cộng dồn (sum) toàn bộ các đoạn để ra tổng năng lượng tuyến đường.
+        3. Sum all segments to determine the total energy of the route.
 
-        Đồng thời tính TOÁN DUNG LƯỢNG PIN KHẢ DỤNG HIỆU DỤNG (effective
-        usable capacity) dựa trên capacity fade factor tại nhiệt độ pin ban
-        đầu — vì trong mùa đông, % pin tiêu thụ phải tính trên dung lượng
-        THỰC TẾ khai thác được, không phải dung lượng danh định lúc 25°C.
+        At the same time, calculate the EFFECTIVE USABLE BATTERY CAPACITY based on the
+        capacity fade factor at the initial battery temperature — because in winter, the
+        % battery consumed must be based on the actual usable capacity, not the nominal
+        capacity at 25°C.
         """
         driving_energy_kwh_total = 0.0
         winter_overhead_kwh_total = 0.0
@@ -167,7 +166,7 @@ class RouteOptimizationEngine:
         for i, seg in enumerate(route.segments):
             rho = air_density_at_temperature(seg.ambient_temp_c)
 
-            # --- (1) Năng lượng động lực học thuần tuý ---
+            # --- (1) Pure vehicle dynamics energy ---
             driving_energy_kwh = self.vehicle.compute_segment_energy_kwh(
                 distance_m=seg.distance_m,
                 avg_speed_mps=seg.avg_speed_mps,
@@ -175,10 +174,10 @@ class RouteOptimizationEngine:
                 air_density=rho,
             )
 
-            # --- (2) Năng lượng hao hụt do HVAC + BTMS trên đoạn này ---
-            # Chỉ áp dụng BTMS "pull-down" (làm nóng pin từ lạnh) cho ĐOẠN ĐẦU
-            # TIÊN của tuyến (giả định pin đã đạt nhiệt độ vận hành sau đó);
-            # các đoạn sau chỉ tính chi phí "duy trì" nhiệt độ (holding loss).
+            # --- (2) Energy loss from HVAC + BTMS on this segment ---
+            # Apply BTMS "pull-down" heating only to the FIRST segment of the route
+            # (assuming the battery reaches operating temperature afterward);
+            # later segments only account for temperature maintenance (holding loss).
             is_first_segment = (i == 0)
             winter_result = self.hvac_sim.compute_total_winter_energy_overhead(
                 ambient_temp_c=seg.ambient_temp_c,
@@ -207,7 +206,7 @@ class RouteOptimizationEngine:
 
         total_energy_kwh = driving_energy_kwh_total + winter_overhead_kwh_total
 
-        # --- Dung lượng pin khả dụng hiệu dụng theo nhiệt độ pin ban đầu ---
+        # --- Effective usable battery capacity based on initial battery temperature ---
         ref_battery_temp = (
             self.battery_initial_temp_c
             if self.battery_initial_temp_c is not None
@@ -242,19 +241,19 @@ class RouteOptimizationEngine:
         )
 
     # ------------------------------------------------------------------
-    # SO SÁNH NHIỀU TUYẾN & CHỌN TUYẾN TỐI ƯU
+    # COMPARE MULTIPLE ROUTES & CHOOSE THE OPTIMAL ROUTE
     # ------------------------------------------------------------------
     def compare_and_optimize(self, routes: List[RouteCandidate]) -> Dict[str, Any]:
         """
-        Phân tích toàn bộ danh sách tuyến đường ứng viên, sắp xếp theo tổng
-        năng lượng tiêu thụ tăng dần, và trả về:
-            - all_results: kết quả phân tích chi tiết của TẤT CẢ các tuyến
-            - optimal_route: tuyến đường tối ưu (tiêu thụ pin ít nhất)
-            - explanation: giải thích chi tiết bằng ngôn ngữ tự nhiên (tiếng Việt)
-              lý do tuyến này tối ưu hơn các tuyến còn lại.
+        Analyze the full list of candidate routes, sort them by total energy use in
+        ascending order, and return:
+            - all_results: detailed analysis for ALL routes
+            - optimal_route: the optimal route (lowest battery usage)
+            - explanation: a detailed natural-language explanation of why this route is better
+              than the others.
         """
         if not routes:
-            raise ValueError("Danh sách routes rỗng, không có gì để tối ưu.")
+            raise ValueError("Route list is empty; there is nothing to optimize.")
 
         results = [self.analyze_route(r) for r in routes]
         results_sorted = sorted(results, key=lambda r: r.total_energy_kwh)
@@ -296,28 +295,28 @@ class RouteOptimizationEngine:
         all_ranked: List[RouteAnalysisResult],
     ) -> str:
         """
-        Sinh giải thích ngôn ngữ tự nhiên (tiếng Việt) cho quyết định tối ưu,
-        dựa trên PHÂN TÍCH ĐỊNH LƯỢNG các yếu tố khác biệt giữa tuyến tối ưu
-        và tuyến gần nhất (runner-up) — ví dụ: quãng đường dài hơn nhưng ít
-        dốc hơn nên tổng năng lượng vẫn thấp hơn.
+        Generate a natural-language explanation for the optimal decision, based on QUANTITATIVE
+        analysis of the differences between the optimal route and the nearest competitor
+        (runner-up) — for example, a longer route but with fewer steep grades, which still
+        results in lower total energy.
         """
         lines = []
         lines.append(
-            f"✅ TUYẾN ĐƯỜNG TỐI ƯU: '{optimal.route_name}' — "
-            f"tiêu thụ {optimal.total_energy_kwh:.2f} kWh "
-            f"({optimal.battery_percent_consumed:.2f}% dung lượng pin khả dụng hiệu dụng "
+            f"✅ OPTIMAL ROUTE: '{optimal.route_name}' — "
+            f"consumes {optimal.total_energy_kwh:.2f} kWh "
+            f"({optimal.battery_percent_consumed:.2f}% of effective usable battery capacity "
             f"{optimal.effective_usable_capacity_kwh:.1f} kWh)."
         )
         lines.append(
-            f"   - Quãng đường: {optimal.distance_km:.1f} km | Thời gian: {optimal.duration_min:.0f} phút"
+            f"   - Distance: {optimal.distance_km:.1f} km | Time: {optimal.duration_min:.0f} minutes"
         )
         lines.append(
-            f"   - Năng lượng động lực học (di chuyển): {optimal.driving_energy_kwh:.2f} kWh "
-            f"| Hao hụt do sưởi cabin & pin mùa đông: {optimal.winter_overhead_kwh:.2f} kWh"
+            f"   - Driving energy: {optimal.driving_energy_kwh:.2f} kWh "
+            f"| Winter cabin & battery heating overhead: {optimal.winter_overhead_kwh:.2f} kWh"
         )
         lines.append(
-            f"   - Độ dốc lớn nhất trên tuyến: {optimal.max_grade_percent:.1f}% | "
-            f"Tổng độ cao phải leo: {optimal.total_elevation_gain_m:.0f} m"
+            f"   - Maximum grade: {optimal.max_grade_percent:.1f}% | "
+            f"Total elevation gain: {optimal.total_elevation_gain_m:.0f} m"
         )
 
         if runner_up is not None:
@@ -327,40 +326,37 @@ class RouteOptimizationEngine:
 
             lines.append("")
             lines.append(
-                f"📊 SO SÁNH với tuyến gần nhất '{runner_up.route_name}' "
+                f"📊 COMPARISON vs. nearest route '{runner_up.route_name}' "
                 f"({runner_up.total_energy_kwh:.2f} kWh):"
             )
             lines.append(
-                f"   - Tuyến tối ưu tiết kiệm hơn {abs(delta_energy):.2f} kWh "
-                f"(~{abs(delta_energy)/runner_up.total_energy_kwh*100:.1f}% ít hơn)."
+                f"   - The optimal route saves {abs(delta_energy):.2f} kWh "
+                f"(~{abs(delta_energy)/runner_up.total_energy_kwh*100:.1f}% less)."
             )
 
             if delta_distance > 0:
-                # Tuyến tối ưu DÀI HƠN nhưng vẫn tiết kiệm hơn -> giải thích lý do kinh điển
+                # The optimal route is LONGER but still more efficient -> classic explanation
                 lines.append(
-                    f"   - Dù DÀI HƠN {delta_distance:.1f} km so với tuyến kia, tuyến tối ưu vẫn "
-                    f"tiết kiệm pin hơn vì có ít đoạn dốc hơn (leo tổng cộng ít hơn "
-                    f"{delta_elevation:.0f} m). Lực leo dốc (F_grade = m·g·sin(θ)) tăng gần như "
-                    f"TUYẾN TÍNH theo độ dốc và khối lượng xe, trong khi lực cản lăn/khí động học "
-                    f"trên quãng đường bằng phẳng tăng thêm chỉ tương đối nhỏ — vì vậy tránh dốc "
-                    f"cao thường mang lại lợi ích năng lượng lớn hơn việc đi đường ngắn nhất."
+                    f"   - Although it is {delta_distance:.1f} km longer than the other route, the optimal route still "
+                    f"uses less battery because it has fewer steep sections (total climb is {delta_elevation:.0f} m less). "
+                    f"Grade force (F_grade = m·g·sin(θ)) increases almost linearly with slope and vehicle mass, while "
+                    f"rolling and aerodynamic resistance over a flat road only increase relatively little — therefore, "
+                    f"avoiding steep climbs often provides more energy savings than taking the shortest route."
                 )
             elif delta_distance < 0:
                 lines.append(
-                    f"   - Tuyến tối ưu NGẮN HƠN {abs(delta_distance):.1f} km VÀ ít dốc hơn "
-                    f"({delta_elevation:.0f} m leo ít hơn) — chiến thắng trên cả hai tiêu chí, "
-                    f"nên là lựa chọn rõ ràng."
+                    f"   - The optimal route is {abs(delta_distance):.1f} km shorter AND has less grade "
+                    f"({delta_elevation:.0f} m less climb) — it wins on both criteria and is clearly the best choice."
                 )
             else:
                 lines.append(
-                    "   - Quãng đường tương đương nhau, chênh lệch năng lượng chủ yếu đến từ "
-                    "cấu trúc độ dốc và/hoặc chênh lệch nhiệt độ dọc tuyến (ảnh hưởng đến "
-                    "công suất HVAC & BTMS)."
+                    "   - The routes are similar in distance; the main difference comes from the slope structure "
+                    "and/or temperature differences along the route (which affect HVAC & BTMS power demand)."
                 )
 
         if len(all_ranked) > 2:
             lines.append("")
-            lines.append("📋 Toàn bộ xếp hạng các tuyến (từ tiết kiệm nhất đến tốn nhất):")
+            lines.append("📋 Full route ranking (from most efficient to least efficient):")
             for idx, r in enumerate(all_ranked, start=1):
                 lines.append(f"   {idx}. {r.route_name}: {r.total_energy_kwh:.2f} kWh")
 
@@ -368,7 +364,7 @@ class RouteOptimizationEngine:
 
 
 # ============================================================================
-# HÀM TIỆN ÍCH: XÂY DỰNG RouteCandidate TỪ DỮ LIỆU API THẬT
+# UTILITY: BUILD A RouteCandidate FROM REAL API DATA
 # ============================================================================
 def build_route_candidate_from_api(
     route_name: str,
@@ -380,11 +376,10 @@ def build_route_candidate_from_api(
     use_mock_on_failure: bool = True,
 ) -> RouteCandidate:
     """
-    Xây dựng một RouteCandidate hoàn chỉnh bằng cách gọi các API thật
-    (Elevation + Weather). Nếu API lỗi (thiếu key, mất mạng...) và
-    use_mock_on_failure=True, sẽ tự động fallback sang dữ liệu mô phỏng
-    (generate_mock_elevation_profile) kèm cảnh báo — đảm bảo hệ thống
-    vẫn hoạt động được để demo/test ngay cả khi chưa cấu hình API key.
+    Build a complete RouteCandidate by calling the real APIs (Elevation + Weather).
+    If the API fails (missing key, network loss, etc.) and use_mock_on_failure=True,
+    it will automatically fall back to simulated data (generate_mock_elevation_profile)
+    with a warning — ensuring the system still works for demo/testing even without API keys.
     """
     origin_lat, origin_lng = origin
     dest_lat, dest_lng = destination
@@ -399,9 +394,9 @@ def build_route_candidate_from_api(
     except APIIntegrationError as e:
         if not use_mock_on_failure:
             raise
-        print(f"[WARN] Gọi API thất bại ({e}). Chuyển sang dữ liệu MÔ PHỎNG (mock) để demo.")
+        print(f"[WARN] API call failed ({e}). Falling back to mock data for demo purposes.")
         elevation_profile = generate_mock_elevation_profile(origin_lat, origin_lng, dest_lat, dest_lng, num_points=20)
-        avg_temp_c = -8.0  # nhiệt độ mùa đông giả định mặc định khi không có dữ liệu thật
+        avg_temp_c = -8.0  # default winter temperature assumption when no real data is available
 
     segments: List[RouteSegment] = []
     for i in range(len(elevation_profile) - 1):
@@ -424,15 +419,15 @@ def build_route_candidate_from_api(
 
 
 # ============================================================================
-# KHỐI TỰ KIỂM TRA — VÍ DỤ SO SÁNH 2 TUYẾN ĐƯỜNG (dữ liệu thủ công)
+# SELF-TEST BLOCK — EXAMPLE COMPARISON OF 2 ROUTES (manual data)
 # ============================================================================
 if __name__ == "__main__":
-    print("=== TEST: So sánh 2 tuyến đường mùa đông, -10°C ===\n")
+    print("=== TEST: Compare 2 winter routes, -10°C ===\n")
 
-    # Tuyến 1: Đường trực tiếp qua đèo, ngắn nhưng dốc đứng
+    # Route 1: direct mountain road, shorter but steeper
     route_direct = RouteCandidate(
-        route_name="Tuyến 1: Đường đèo trực tiếp",
-        description="Ngắn hơn nhưng có đoạn dốc lên tới 8%",
+        route_name="Route 1: Direct mountain road",
+        description="Shorter but with grades up to 8%",
         segments=[
             RouteSegment(distance_m=8000, avg_speed_kmh=60, grade_percent=8.0, ambient_temp_c=-10.0),
             RouteSegment(distance_m=12000, avg_speed_kmh=70, grade_percent=5.0, ambient_temp_c=-10.0),
@@ -441,10 +436,10 @@ if __name__ == "__main__":
         ],
     )
 
-    # Tuyến 2: Đường vòng xa hơn nhưng phẳng, qua thị trấn
+    # Route 2: longer but flatter road through town
     route_flat = RouteCandidate(
-        route_name="Tuyến 2: Đường vòng bằng phẳng",
-        description="Xa hơn nhưng gần như không dốc",
+        route_name="Route 2: Flat detour",
+        description="Longer but almost flat",
         segments=[
             RouteSegment(distance_m=15000, avg_speed_kmh=90, grade_percent=0.5, ambient_temp_c=-9.0),
             RouteSegment(distance_m=18000, avg_speed_kmh=95, grade_percent=-0.5, ambient_temp_c=-9.5),

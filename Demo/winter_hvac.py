@@ -2,26 +2,24 @@
 """
 ================================================================================
 MODULE: winter_hvac.py
-BƯỚC 2 — Winter Climate & Thermal Management Engine
+STEP 2 — Winter Climate & Thermal Management Engine
 ================================================================================
-Mục đích:
-    Mô phỏng ảnh hưởng của thời tiết mùa đông (nhiệt độ âm) lên tiêu thụ
-    năng lượng của Polestar 4 thông qua 2 hệ thống nhiệt độc lập nhưng
-    liên quan:
-        1. HVAC khoang cabin (sưởi ấm hành khách)
-        2. BTMS - Battery Thermal Management System (sưởi pin)
-    Đồng thời mô hình hoá sự suy giảm hiệu suất pin (capacity fade /
-    internal resistance losses) do nhiệt độ thấp.
+Purpose:
+        Simulate the effect of winter conditions (sub-zero temperatures) on energy
+        consumption for the Polestar 4 through two related but distinct thermal systems:
+                1. Cabin HVAC (heating the passenger compartment)
+                2. BTMS - Battery Thermal Management System (battery heating)
+        This also models reduced battery performance (capacity fade / internal
+        resistance losses) caused by low temperatures.
 
-Ghi chú kỹ thuật:
-    - Polestar 4 sử dụng bơm nhiệt (heat pump) làm nguồn sưởi chính cho
-      cabin (hiệu quả hơn sưởi điện trở PTC thuần tuý), với COP (Coefficient
-      of Performance) giảm dần khi nhiệt độ ngoài trời giảm.
-    - Mô hình nhiệt cabin dùng mô hình "lumped thermal mass" đơn giản hoá
-      (1 khối nhiệt dung đại diện cho không khí + nội thất cabin).
-    - Mô hình BTMS dùng công suất sưởi pin theo bảng tra cứu thực nghiệm
-      (empirical lookup) theo dải nhiệt độ, mô phỏng theo dữ liệu công bố
-      chung của các hệ thống BTMS pin Lithium-ion trên EV hiện đại.
+Technical notes:
+        - The Polestar 4 uses a heat pump as the primary cabin heating source
+            (more efficient than pure PTC electric resistance heating), with COP
+            (Coefficient of Performance) decreasing as ambient temperature drops.
+        - The cabin thermal model uses a simplified "lumped thermal mass" approach
+            (one thermal mass representing cabin air + cabin interior).
+        - The BTMS model uses empirical heating power lookup tables by temperature
+            band, reflecting general published behavior of modern EV lithium-ion BTMS systems.
 ================================================================================
 """
 
@@ -35,69 +33,68 @@ from typing import Dict, List, Tuple, Optional
 @dataclass
 class WinterHVACSimulation:
     """
-    Class OOP mô phỏng hệ thống HVAC cabin + BTMS pin cho Polestar 4
-    trong điều kiện mùa đông lạnh giá (-10°C đến 0°C, có thể mở rộng thấp hơn).
+    OOP class modeling the cabin HVAC + battery BTMS system for the Polestar 4
+    under cold winter conditions (-10°C to 0°C, and potentially lower).
     """
 
-    # ---------------- Thông số nhiệt cabin (lumped thermal model) ----------------
-    cabin_volume_m3: float = 3.2          # thể tích khoang cabin xấp xỉ (m^3)
-    cabin_surface_area_m2: float = 11.5   # diện tích bề mặt truyền nhiệt cabin ra ngoài (m^2)
-    cabin_u_value_w_m2k: float = 2.5      # hệ số truyền nhiệt tổng hợp vỏ xe/kính (W/(m^2·K))
-                                           # (giá trị blend giữa thân xe cách nhiệt tốt ~0.8-1.2
-                                           # và diện tích kính lớn dẫn nhiệt kém ~5.5-5.8, đặc thù
-                                           # xe có diện tích kính lớn như Polestar 4 - không kính hậu)
+    # ---------------- Cabin thermal parameters (lumped thermal model) ----------------
+    cabin_volume_m3: float = 3.2          # approximate cabin volume (m^3)
+    cabin_surface_area_m2: float = 11.5   # outer cabin heat-transfer surface area (m^2)
+    cabin_u_value_w_m2k: float = 2.5      # overall heat-transfer coefficient of body/glazing (W/(m^2·K))
+                                           # (blend between well-insulated body ~0.8-1.2 and large glass area
+                                           # with poorer insulation ~5.5-5.8, characteristic of the Polestar 4's
+                                           # large glasshouse / no rear glass)
     hvac_fresh_air_flow_m3_per_h: float = 180.0
-    # ^ lưu lượng khí tươi mà hệ thống HVAC hút vào và làm nóng liên tục để
-    #   chống đọng sương/mờ kính (defog) + duy trì chất lượng không khí, ở mức
-    #   quạt gió trung bình. Đây là dòng khí THỰC SỰ đi qua giàn sưởi, khác với
-    #   rò rỉ khí bị động — vì vậy dùng lưu lượng thể tích trực tiếp thay vì
-    #   hệ số ACH (Air Changes per Hour) vốn chỉ mô tả rò rỉ thụ động.
+    # ^ fresh-air flow that the HVAC system continuously draws in and heats to prevent
+    #   condensation/fogging of windows and maintain cabin air quality, at average fan speed.
+    #   This is the actual air flow passing through the heater core, unlike passive leakage,
+    #   so we use direct volumetric flow instead of ACH (Air Changes per Hour), which only
+    #   describes passive leakage.
     air_density_kg_m3: float = 1.25
-    air_specific_heat_j_kgk: float = 1005.0  # nhiệt dung riêng không khí (J/(kg·K))
+    air_specific_heat_j_kgk: float = 1005.0  # specific heat capacity of air (J/(kg·K))
 
-    cabin_target_temp_c: float = 22.0     # nhiệt độ cabin mục tiêu (chế độ sưởi bình thường)
+    cabin_target_temp_c: float = 22.0     # target cabin temperature (normal heat mode)
 
-    # ---------------- Thông số bơm nhiệt (Heat Pump) cho HVAC cabin ----------------
-    heat_pump_cop_at_0c: float = 3.0      # COP của bơm nhiệt tại 0°C
-    heat_pump_cop_at_neg10c: float = 1.8  # COP giảm khi trời càng lạnh (khó trích nhiệt từ không khí)
-    heat_pump_max_power_kw: float = 6.0   # công suất sưởi tối đa của bơm nhiệt (kW nhiệt đầu ra)
-    ptc_backup_heater_kw: float = 4.0     # sưởi điện trở PTC dự phòng khi bơm nhiệt không đủ công suất
+    # ---------------- Heat pump parameters for cabin HVAC ----------------
+    heat_pump_cop_at_0c: float = 3.0      # COP of the heat pump at 0°C
+    heat_pump_cop_at_neg10c: float = 1.8  # COP decreases as ambient temperature drops (harder to extract heat from the air)
+    heat_pump_max_power_kw: float = 6.0   # maximum cabin heat output of the heat pump (kW thermal output)
+    ptc_backup_heater_kw: float = 4.0     # auxiliary PTC resistance heater power when the heat pump is insufficient
 
-    # ---------------- Thông số BTMS (Battery Thermal Management) ----------------
-    battery_mass_kg: float = 550.0        # khối lượng pack pin (kg), bao gồm cell + vỏ + khung
-    battery_specific_heat_j_kgk: float = 950.0  # nhiệt dung riêng trung bình pack pin (J/(kg·K))
-    battery_target_temp_c: float = 20.0   # nhiệt độ vận hành tối ưu của pin (°C)
-    battery_min_safe_temp_c: float = 5.0  # dưới ngưỡng này, BTMS phải sưởi tích cực trước khi sạc/xả mạnh
-    btms_heater_max_power_kw: float = 6.0 # công suất sưởi pin tối đa (heater điện trở/heat pump phụ)
-    btms_insulation_loss_w_per_k: float = 8.0  # tổn thất nhiệt pack pin ra môi trường (W/K), pack có cách nhiệt tốt
+    # ---------------- BTMS (Battery Thermal Management) parameters ----------------
+    battery_mass_kg: float = 550.0        # battery pack mass (kg), including cells + casing + frame
+    battery_specific_heat_j_kgk: float = 950.0  # representative battery pack specific heat capacity (J/(kg·K))
+    battery_target_temp_c: float = 20.0   # optimal battery operating temperature (°C)
+    battery_min_safe_temp_c: float = 5.0  # below this threshold, BTMS must actively heat before heavy charge/discharge
+    btms_heater_max_power_kw: float = 6.0 # maximum battery heating power (resistance heater / auxiliary heat pump)
+    btms_insulation_loss_w_per_k: float = 8.0  # heat loss from the battery pack to the environment (W/K), pack with good insulation
 
-    # ---------------- Suy giảm hiệu suất pin theo nhiệt độ ----------------
-    # Bảng tra cứu thực nghiệm (empirical lookup table): hệ số hiệu dụng dung lượng
-    # pin (effective capacity factor) và hệ số tăng nội trở (internal resistance
-    # multiplier) theo nhiệt độ pin. Nội suy tuyến tính giữa các mốc.
+    # ---------------- Battery performance degradation with temperature ----------------
+    # Empirical lookup table: effective battery capacity factor and internal resistance
+    # multiplier versus battery temperature. Linear interpolation is used between points.
     capacity_fade_lookup_temp_c: Tuple[float, ...] = (-20, -10, 0, 10, 20, 25)
     capacity_fade_factor: Tuple[float, ...] = (0.68, 0.78, 0.88, 0.95, 0.99, 1.00)
-    # ^ ví dụ: ở -10°C, pin chỉ khai thác được ~78% dung lượng danh định do
-    #   tốc độ phản ứng điện hoá chậm lại + độ nhớt chất điện giải tăng.
+    # ^ for example, at -10°C the battery can only effectively use about 78% of its nominal
+    #   capacity because electrochemical reaction rates slow and electrolyte viscosity increases.
 
     internal_resistance_multiplier_lookup: Tuple[float, ...] = (2.6, 1.9, 1.35, 1.1, 1.0, 1.0)
-    # ^ nội trở tăng -> tổn hao I^2*R tăng khi sạc/xả dòng lớn ở nhiệt độ thấp.
+    # ^ increased internal resistance -> higher I^2*R losses during high-current charging/discharging at low temperature.
 
     # ========================================================================
-    # A. TÍNH TOÁN CÔNG SUẤT SƯỞI CABIN (HVAC)
+    # A. CABIN HEATING POWER CALCULATION (HVAC)
     # ========================================================================
     def _interpolate_heat_pump_cop(self, ambient_temp_c: float) -> float:
         """
-        Nội suy tuyến tính hệ số hiệu suất COP của bơm nhiệt theo nhiệt độ
-        môi trường, giữa 2 mốc đã hiệu chuẩn (0°C và -10°C):
+        Linearly interpolate the heat-pump COP versus ambient temperature using the two
+        calibrated points at 0°C and -10°C:
 
             COP(T) = COP_neg10 + (COP_0 - COP_neg10) * (T - (-10)) / (0 - (-10))
 
-        Ngoài dải [-10, 0] ta clamp (giới hạn) để tránh ngoại suy sai lệch:
-            - Nếu T < -10°C: COP giảm tuyến tính thêm nhưng không dưới 1.0
-              (dưới 1.0 nghĩa là kém hơn sưởi điện trở thuần, không thực tế
-              với bơm nhiệt hiện đại nên ta chặn sàn ở 1.0)
-            - Nếu T > 0°C: COP tăng tiếp theo cùng độ dốc, chặn trần hợp lý ở 4.0
+                Outside the range [-10, 0], clamp the value to prevent unrealistic extrapolation:
+                        - If T < -10°C: COP drops further linearly but not below 1.0
+                            (below 1.0 would mean worse than pure resistance heating, which is not realistic
+                            for modern heat pumps, so we enforce a floor of 1.0)
+                        - If T > 0°C: COP continues to increase with the same slope, capped at a reasonable maximum of 4.0
         """
         slope = (self.heat_pump_cop_at_0c - self.heat_pump_cop_at_neg10c) / (0 - (-10))
         cop = self.heat_pump_cop_at_neg10c + slope * (ambient_temp_c - (-10))
@@ -106,21 +103,20 @@ class WinterHVACSimulation:
 
     def compute_cabin_heat_loss_w(self, ambient_temp_c: float, cabin_temp_c: Optional[float] = None) -> Dict[str, float]:
         """
-        Tính tổng nhiệt lượng thất thoát ra khỏi cabin (W) cần bù đắp để
-        duy trì nhiệt độ mục tiêu, gồm 2 thành phần:
+        Calculate the total heat loss from the cabin (W) that must be offset to maintain the
+        target temperature, consisting of two components:
 
-        (1) Dẫn nhiệt/đối lưu qua vỏ xe & kính (Conduction/Convection loss):
+        (1) Heat conduction/convection through the body and glass (Conduction/Convection loss):
                 Q_conduction = U * A * deltaT
-            U: hệ số truyền nhiệt tổng hợp (W/m^2·K)
-            A: diện tích bề mặt truyền nhiệt (m^2)
-            deltaT: chênh lệch nhiệt độ trong/ngoài cabin (K = °C)
+            U: overall heat-transfer coefficient (W/m^2·K)
+            A: heat-transfer surface area (m^2)
+            deltaT: temperature difference inside vs. outside the cabin (K = °C)
 
-        (2) Làm nóng dòng khí tươi nạp vào cabin (Fresh-air heating load):
+        (2) Heating the incoming fresh-air stream (Fresh-air heating load):
                 mdot_air = (flow_m3_per_h / 3600) * rho_air     [kg/s]
                 Q_air = mdot_air * c_p_air * deltaT              [W]
-            Đây là tải nhiệt để hâm nóng luồng khí lạnh từ ngoài trời được
-            hệ thống HVAC hút vào liên tục (bắt buộc để chống mờ/đọng sương
-            kính lái theo luật an toàn), khác với tổn thất rò rỉ thụ động.
+            This is the heat required to warm the cold outdoor air continuously drawn in by the HVAC system
+            to prevent windshield fogging and maintain cabin air quality, unlike passive leakage losses.
 
         Q_total = Q_conduction + Q_air
         """
@@ -128,7 +124,7 @@ class WinterHVACSimulation:
             cabin_temp_c = self.cabin_target_temp_c
 
         delta_t = cabin_temp_c - ambient_temp_c
-        delta_t = max(delta_t, 0.0)  # nếu ngoài trời ấm hơn mục tiêu thì không cần sưởi
+        delta_t = max(delta_t, 0.0)  # if the outside air is warmer than the target, no heating is needed
 
         q_conduction_w = self.cabin_u_value_w_m2k * self.cabin_surface_area_m2 * delta_t
 
@@ -146,20 +142,19 @@ class WinterHVACSimulation:
 
     def compute_cabin_hvac_electric_power_kw(self, ambient_temp_c: float, cabin_temp_c: Optional[float] = None) -> Dict[str, float]:
         """
-        Tính CÔNG SUẤT ĐIỆN (kW) mà hệ thống HVAC cần rút từ pin để bù đắp
-        nhiệt lượng thất thoát, có xét đến hiệu suất bơm nhiệt (COP):
+        Calculate the electrical power (kW) that the HVAC system needs to draw from the battery
+        to offset the heat loss, including heat-pump efficiency (COP):
 
             P_electric_heat_pump = Q_heat_loss / COP(T_ambient)
 
-        Nếu nhu cầu nhiệt vượt quá công suất tối đa của bơm nhiệt
-        (heat_pump_max_power_kw), phần còn thiếu được bù bởi sưởi điện trở
-        PTC phụ trợ (hiệu suất PTC xấp xỉ 1.0, tức COP=1, vì chuyển hoá điện
-        trực tiếp thành nhiệt):
+        If the heat demand exceeds the maximum heat-pump capacity
+        (heat_pump_max_power_kw), the shortfall is supplied by the auxiliary PTC resistance heater
+        (PTC efficiency is approximately 1.0, i.e., COP=1, because electricity is converted directly into heat):
 
             Q_shortfall = Q_heat_loss - Q_heat_pump_max
             P_ptc = Q_shortfall / 1.0   (nếu Q_shortfall > 0)
 
-        Tổng công suất điện tiêu thụ cho cabin:
+        Total electrical power consumed for cabin heating:
             P_hvac_total = P_electric_heat_pump + P_ptc
         """
         heat_loss = self.compute_cabin_heat_loss_w(ambient_temp_c, cabin_temp_c)
@@ -191,7 +186,7 @@ class WinterHVACSimulation:
         }
 
     # ========================================================================
-    # B. TÍNH TOÁN BTMS - SƯỞI PIN
+    # B. BTMS - BATTERY HEATING CALCULATION
     # ========================================================================
     def compute_battery_heating_power_kw(
         self,
@@ -200,32 +195,28 @@ class WinterHVACSimulation:
         time_to_target_s: float = 900.0,
     ) -> Dict[str, float]:
         """
-        Tính công suất điện (kW) cần thiết để BTMS làm ấm pin lên nhiệt độ
-        vận hành tối ưu (battery_target_temp_c), theo mô hình nhiệt dung
-        tập trung (lumped capacitance model):
+        Calculate the electrical power (kW) needed for BTMS to warm the battery to its
+        optimal operating temperature (battery_target_temp_c), using a lumped capacitance model:
 
-        (1) Nhiệt lượng cần cấp để NÂNG NHIỆT ĐỘ pin (sensible heating):
+        (1) Heat required to RAISE the battery temperature (sensible heating):
                 Q_raise = m_battery * c_p_battery * (T_target - T_current)
-            (chỉ tính nếu T_current < T_target; nếu pin đã đủ ấm, Q_raise = 0)
+            (only counted if T_current < T_target; if the battery is already warm enough, Q_raise = 0)
 
-            Công suất trung bình cần thiết để đạt mục tiêu trong thời gian
-            time_to_target_s:
+            Average power required to reach the target within time_to_target_s:
                 P_raise = Q_raise / time_to_target_s
 
-        (2) Nhiệt lượng cần bù đắp TỔN THẤT LIÊN TỤC ra môi trường trong lúc
-            duy trì nhiệt độ (steady-state holding loss), qua lớp cách nhiệt
-            pack pin:
+        (2) Heat required to compensate for CONTINUOUS heat loss to the environment while
+            maintaining temperature (steady-state holding loss) through the battery pack insulation:
                 Q_hold_loss = k_insulation * (T_target - T_ambient)
-            k_insulation: hệ số tổn thất nhiệt của pack (W/K), pack pin có
-            vỏ cách nhiệt + có thể đặt trong khoang gầm hở ra khí lạnh.
+            k_insulation: pack heat-loss coefficient (W/K), with the battery pack insulated and
+            potentially exposed to cold ambient air in the underbody or cabin.
 
-        Tổng công suất điện BTMS (giả định heater hiệu suất ~95%, một phần nhỏ
-        tổn hao qua dây dẫn/điều khiển):
+        Total BTMS electrical power (assuming heater efficiency ~95%, with minor losses in wiring/control):
                 P_btms_total = (P_raise + Q_hold_loss) / eta_heater
         """
         if current_battery_temp_c is None:
-            # Giả định mặc định: nhiệt độ pin xấp xỉ nhiệt độ môi trường khi
-            # xe đỗ qua đêm ngoài trời lạnh (cold-soaked battery)
+            # Default assumption: battery temperature is close to ambient when the car
+            # has been parked overnight in cold weather (cold-soaked battery)
             current_battery_temp_c = ambient_temp_c
 
         eta_heater = 0.95
@@ -252,12 +243,12 @@ class WinterHVACSimulation:
         }
 
     # ========================================================================
-    # C. SUY GIẢM HIỆU SUẤT PIN DO NHIỆT ĐỘ THẤP
+    # C. BATTERY PERFORMANCE DEGRADATION IN LOW TEMPERATURES
     # ========================================================================
     @staticmethod
     def _linear_interp(x: float, xp: Tuple[float, ...], fp: Tuple[float, ...]) -> float:
-        """Hàm nội suy tuyến tính từng đoạn thủ công (không phụ thuộc numpy),
-        có clamp ở 2 đầu bảng tra cứu."""
+        """Manual piecewise-linear interpolation function (without numpy),
+        with clamping at both ends of the lookup table."""
         if x <= xp[0]:
             return fp[0]
         if x >= xp[-1]:
@@ -270,13 +261,13 @@ class WinterHVACSimulation:
 
     def compute_capacity_fade_factor(self, battery_temp_c: float) -> float:
         """
-        Trả về hệ số dung lượng hiệu dụng (0.0 - 1.0) của pin tại nhiệt độ
-        cho trước, nội suy từ bảng thực nghiệm capacity_fade_lookup_temp_c /
-        capacity_fade_factor.
+        Return the effective usable capacity factor (0.0 - 1.0) of the battery at the
+        specified temperature, interpolated from the experimental lookup table
+        capacity_fade_lookup_temp_c / capacity_fade_factor.
 
-        Ý nghĩa vật lý: ở nhiệt độ thấp, tốc độ khuếch tán ion Li+ trong chất
-        điện giải và điện cực chậm lại, làm giảm dung lượng KHẢ DỤNG tức thời
-        (không phải suy giảm vĩnh viễn - capacity hồi phục khi pin ấm lên).
+        Physical meaning: at low temperatures, the diffusion rate of Li+ ions in the
+        electrolyte and electrodes slows, reducing the immediate usable capacity
+        (not permanent degradation; capacity recovers when the battery warms up).
         """
         return self._linear_interp(
             battery_temp_c, self.capacity_fade_lookup_temp_c, self.capacity_fade_factor
@@ -284,8 +275,9 @@ class WinterHVACSimulation:
 
     def compute_internal_resistance_multiplier(self, battery_temp_c: float) -> float:
         """
-        Trả về hệ số nhân nội trở tại nhiệt độ pin cho trước, dùng để ước
-        tính thêm tổn hao I^2*R khi pin hoạt động (sạc/xả) ở nhiệt độ thấp.
+        Return the internal resistance multiplier at the specified battery temperature,
+        used to estimate additional I^2*R losses when the battery operates (charges/discharges)
+        at low temperatures.
         """
         return self._linear_interp(
             battery_temp_c,
@@ -295,14 +287,14 @@ class WinterHVACSimulation:
 
     def compute_effective_usable_capacity_kwh(self, nominal_usable_capacity_kwh: float, battery_temp_c: float) -> float:
         """
-        Dung lượng khả dụng hiệu dụng trong điều kiện lạnh:
+        Effective usable capacity in cold conditions:
             C_effective = C_nominal * capacity_fade_factor(T_battery)
         """
         factor = self.compute_capacity_fade_factor(battery_temp_c)
         return nominal_usable_capacity_kwh * factor
 
     # ========================================================================
-    # D. TỔNG HỢP: HAO HỤT ĐIỆN NĂNG DO HVAC + BTMS THEO THỜI GIAN/QUÃNG ĐƯỜNG
+    # D. AGGREGATION: ENERGY LOSS FROM HVAC + BTMS OVER TIME/DISTANCE
     # ========================================================================
     def compute_total_winter_energy_overhead(
         self,
@@ -313,15 +305,15 @@ class WinterHVACSimulation:
         time_to_target_s: float = 900.0,
     ) -> Dict[str, float]:
         """
-        Tổng hợp toàn bộ hao hụt điện năng (kWh) do hệ thống HVAC cabin + BTMS
-        pin trong suốt một chuyến đi, dựa trên thời lượng chuyến đi.
+        Aggregate the total electrical energy loss (kWh) from the cabin HVAC + battery BTMS
+        system over a trip based on trip duration.
 
-        Giả định đơn giản hoá hợp lý: công suất HVAC & BTMS gần như không đổi
-        trong suốt chuyến đi ngắn/trung bình (vì nhiệt độ môi trường & mục
-        tiêu cabin/pin không đổi) => Energy = Power * time.
+        Reasonable simplified assumption: HVAC and BTMS power remain close to constant
+        over short to medium trips because ambient temperature and cabin/battery target
+        conditions remain nearly constant => Energy = Power * time.
 
-        (Với chuyến đi rất dài qua nhiều vùng khí hậu khác nhau, nên chia nhỏ
-        theo từng đoạn và gọi lại hàm này cho từng đoạn — xem route_optimizer.py.)
+        (For very long trips crossing multiple climate regions, split the trip into smaller
+        sections and call this function for each section — see route_optimizer.py.)
         """
         hvac_result = self.compute_cabin_hvac_electric_power_kw(ambient_temp_c)
         btms_result = self.compute_battery_heating_power_kw(
@@ -363,7 +355,7 @@ class WinterHVACSimulation:
 if __name__ == "__main__":
     hvac_sim = WinterHVACSimulation()
 
-    print("=== TEST: Điều kiện -10°C, chuyến đi 45 phút, 40km ===")
+    print("=== TEST: Conditions -10°C, trip duration 45 minutes, 40 km ===")
     result = hvac_sim.compute_total_winter_energy_overhead(
         ambient_temp_c=-10.0,
         trip_duration_s=45 * 60,
@@ -373,7 +365,7 @@ if __name__ == "__main__":
     for k, v in result.items():
         print(f"  {k}: {v}")
 
-    print("\n=== TEST: So sánh hệ số suy giảm dung lượng theo nhiệt độ ===")
+    print("\n=== TEST: Compare capacity fade factors by temperature ===")
     for t in [-20, -10, -5, 0, 10, 20]:
         f = hvac_sim.compute_capacity_fade_factor(t)
         r = hvac_sim.compute_internal_resistance_multiplier(t)

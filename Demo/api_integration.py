@@ -2,31 +2,31 @@
 """
 ================================================================================
 MODULE: api_integration.py
-BƯỚC 3 — Elevation & Weather API Integration
+STEP 3 — Elevation & Weather API Integration
 ================================================================================
-Mục đích:
-    Kết nối tới các API bản đồ/thời tiết bên ngoài để lấy:
-        1. Tuyến đường (route) giữa điểm đi (origin) và điểm đến (destination)
-           — dùng Google Routes API (hoặc Directions API cũ).
-        2. Hồ sơ độ cao dọc tuyến đường (elevation profile) — dùng Google
-           Elevation API, từ đó suy ra góc dốc theta cho từng đoạn đường.
-        3. Nhiệt độ môi trường hiện tại tại khu vực tuyến đường đi qua —
-           dùng OpenWeatherMap Current Weather API.
+Purpose:
+    Connect to external map/weather APIs to obtain:
+        1. A route between origin and destination
+           — using Google Routes API (or legacy Directions API).
+        2. An elevation profile along the route — using Google Elevation API,
+           from which road grade angle theta is derived for each segment.
+        3. Current ambient temperature along the route — using the
+           OpenWeatherMap Current Weather API.
 
-Yêu cầu API keys (đặt trong biến môi trường, KHÔNG hard-code trong source):
+API key requirements (set as environment variables, DO NOT hard-code in source):
     GOOGLE_MAPS_API_KEY
     OPENWEATHERMAP_API_KEY
 
-Ghi chú:
-    - Toàn bộ hàm gọi API đều có cơ chế xử lý lỗi (try/except) đầy đủ:
-      lỗi mạng, lỗi timeout, lỗi HTTP status, lỗi parse JSON, API trả về
-      status lỗi nghiệp vụ (vd: ZERO_RESULTS, REQUEST_DENIED...).
-    - Khi không có API key hoặc lỗi kết nối, các hàm sẽ raise một exception
-      tuỳ biến (APIIntegrationError) kèm thông điệp rõ ràng, để lớp gọi
-      phía trên (route_optimizer.py / dashboard.py) có thể fallback sang
-      dữ liệu mô phỏng (mock data) hoặc thông báo cho người dùng.
-    - File sample_api_response.json (cùng thư mục) minh hoạ cấu trúc JSON
-      mẫu trả về từ các API này, dùng cho việc test không cần gọi mạng thật.
+Notes:
+    - All API call functions include thorough error handling (try/except):
+      network failure, timeout, HTTP status errors, JSON parsing errors, and
+      API business errors such as ZERO_RESULTS, REQUEST_DENIED, etc.
+    - If an API key is missing or the connection fails, each function raises a
+      custom exception (APIIntegrationError) with a clear message so the calling
+      layer (route_optimizer.py / dashboard.py) can fall back to simulated/mock data
+      or notify the user.
+    - The file sample_api_response.json (in the same folder) illustrates the example
+      JSON structure returned by these APIs for testing without real network calls.
 ================================================================================
 """
 
@@ -42,20 +42,20 @@ from typing import List, Dict, Optional, Tuple, Any
 try:
     import requests
 except ImportError:  # pragma: no cover
-    requests = None  # sẽ raise lỗi rõ ràng khi thực sự gọi API nếu thiếu thư viện
+    requests = None  # will raise a clear error when the API is actually called if the library is missing
 
 
 # ============================================================================
-# EXCEPTION TUỲ BIẾN
+# CUSTOM EXCEPTION
 # ============================================================================
 class APIIntegrationError(Exception):
-    """Exception chung cho mọi lỗi liên quan đến gọi API bên ngoài
-    (network, timeout, HTTP status lỗi, API business-logic lỗi, thiếu key...)."""
+    """Common exception for all external API-related errors
+    (network, timeout, HTTP status errors, business-logic API errors, missing keys, etc.)."""
     pass
 
 
 # ============================================================================
-# CẤU HÌNH API
+# API CONFIGURATION
 # ============================================================================
 @dataclass
 class APIConfig:
@@ -73,54 +73,54 @@ class APIConfig:
 
 
 # ============================================================================
-# TIỆN ÍCH: GỌI HTTP CÓ RETRY + XỬ LÝ LỖI CHUẨN HOÁ
+# UTILITY: HTTP CALLS WITH RETRY + STANDARDIZED ERROR HANDLING
 # ============================================================================
 def _http_get_with_retry(url: str, params: Dict[str, Any], config: APIConfig, api_name: str) -> Dict[str, Any]:
     """
-    Hàm helper dùng chung cho mọi lời gọi GET tới API bên ngoài, với:
-        - Retry tự động (config.max_retries lần) khi gặp lỗi mạng/timeout
-        - Backoff tăng dần giữa các lần retry
-        - Chuẩn hoá mọi lỗi thành APIIntegrationError để lớp trên xử lý thống nhất
+    Shared helper for all GET requests to external APIs, with:
+        - Automatic retry (config.max_retries times) when network/timeout errors occur
+        - Increasing backoff between retries
+        - Standardized error handling via APIIntegrationError for consistent upper-layer logic
     """
     if requests is None:
         raise APIIntegrationError(
-            f"[{api_name}] Thư viện 'requests' chưa được cài đặt. "
-            f"Hãy chạy: pip install requests"
+            f"[{api_name}] The 'requests' library is not installed. "
+            f"Please run: pip install requests"
         )
 
     last_exception: Optional[Exception] = None
 
-    for attempt in range(1, config.max_retries + 2):  # +1 lần gọi gốc + max_retries lần retry
+    for attempt in range(1, config.max_retries + 2):  # +1 original call + max_retries retries
         try:
             response = requests.get(url, params=params, timeout=config.request_timeout_s)
         except requests.exceptions.Timeout as e:
             last_exception = e
-            _log_retry(api_name, attempt, "Timeout khi gọi API")
+            _log_retry(api_name, attempt, "API timeout")
         except requests.exceptions.ConnectionError as e:
             last_exception = e
-            _log_retry(api_name, attempt, "Lỗi kết nối mạng (ConnectionError)")
+            _log_retry(api_name, attempt, "Network connection error (ConnectionError)")
         except requests.exceptions.RequestException as e:
             last_exception = e
-            _log_retry(api_name, attempt, f"Lỗi request không xác định: {e}")
+            _log_retry(api_name, attempt, f"Unknown request error: {e}")
         else:
-            # Có response, kiểm tra HTTP status code
+            # Response received; check HTTP status code
             if response.status_code == 200:
                 try:
                     return response.json()
                 except json.JSONDecodeError as e:
                     raise APIIntegrationError(
-                        f"[{api_name}] Không thể parse JSON từ response (HTTP 200). Lỗi: {e}"
+                        f"[{api_name}] Could not parse JSON from response (HTTP 200). Error: {e}"
                     )
             elif response.status_code in (429,):
-                # Rate limit -> đáng để retry
+                # Rate limit -> should retry
                 last_exception = APIIntegrationError(f"[{api_name}] HTTP 429 - Rate limited")
-                _log_retry(api_name, attempt, "Bị giới hạn tần suất gọi (429), thử lại...")
+                _log_retry(api_name, attempt, "Rate limit exceeded (429), retrying...")
             elif 500 <= response.status_code < 600:
-                # Lỗi server -> đáng để retry
-                last_exception = APIIntegrationError(f"[{api_name}] HTTP {response.status_code} - Lỗi server")
-                _log_retry(api_name, attempt, f"Lỗi server API ({response.status_code}), thử lại...")
+                # Server error -> should retry
+                last_exception = APIIntegrationError(f"[{api_name}] HTTP {response.status_code} - Server error")
+                _log_retry(api_name, attempt, f"API server error ({response.status_code}), retrying...")
             else:
-                # Lỗi client (400, 401, 403, 404...) -> KHÔNG retry, raise ngay
+                # Client error (400, 401, 403, 404...) -> do not retry, raise immediately
                 raise APIIntegrationError(
                     f"[{api_name}] HTTP {response.status_code}: {response.text[:300]}"
                 )
@@ -129,17 +129,17 @@ def _http_get_with_retry(url: str, params: Dict[str, Any], config: APIConfig, ap
             time.sleep(config.retry_backoff_s * attempt)
 
     raise APIIntegrationError(
-        f"[{api_name}] Gọi API thất bại sau {config.max_retries + 1} lần thử. "
-        f"Lỗi cuối cùng: {last_exception}"
+        f"[{api_name}] API call failed after {config.max_retries + 1} attempts. "
+        f"Final error: {last_exception}"
     )
 
 
 def _log_retry(api_name: str, attempt: int, message: str) -> None:
-    print(f"[WARN][{api_name}] Lần thử {attempt}: {message}")
+    print(f"[WARN][{api_name}] Attempt {attempt}: {message}")
 
 
 # ============================================================================
-# 1. GOOGLE ROUTES API — LẤY CÁC TUYẾN ĐƯỜNG THAY THẾ (ALTERNATIVES)
+# 1. GOOGLE ROUTES API — FETCH ALTERNATIVE ROUTES
 # ============================================================================
 def fetch_route_alternatives(
     origin_lat: float,
@@ -149,24 +149,24 @@ def fetch_route_alternatives(
     config: APIConfig,
 ) -> List[Dict[str, Any]]:
     """
-    Gọi Google Routes API (computeRoutes) để lấy DANH SÁCH các tuyến đường
-    thay thế (alternative routes) giữa 2 toạ độ, mỗi tuyến gồm:
-        - polyline (chuỗi điểm toạ độ dọc tuyến)
-        - distance_m (tổng quãng đường, mét)
-        - duration_s (thời gian di chuyển ước tính, giây)
+    Call Google Routes API (computeRoutes) to fetch a list of alternative routes
+    between two coordinates. Each route contains:
+        - polyline (sequence of path points)
+        - distance_m (total distance in meters)
+        - duration_s (estimated travel time in seconds)
 
-    API endpoint tham khảo: POST https://routes.googleapis.com/directions/v2:computeRoutes
+    Reference endpoint: POST https://routes.googleapis.com/directions/v2:computeRoutes
 
     Returns:
-        List các dict, mỗi dict mô tả 1 tuyến đường (đã chuẩn hoá cấu trúc).
+        A list of dicts, each describing one route in normalized structure.
 
     Raises:
-        APIIntegrationError nếu thiếu API key, lỗi mạng, hoặc API trả về lỗi.
+        APIIntegrationError if the API key is missing, the network fails, or the API returns an error.
     """
     if not config.google_maps_api_key:
         raise APIIntegrationError(
-            "Thiếu GOOGLE_MAPS_API_KEY. Vui lòng đặt biến môi trường hoặc "
-            "truyền vào APIConfig(google_maps_api_key=...)."
+            "Missing GOOGLE_MAPS_API_KEY. Please set the environment variable or "
+            "pass APIConfig(google_maps_api_key=...)."
         )
 
     url = "https://routes.googleapis.com/directions/v2:computeRoutes"
@@ -184,17 +184,17 @@ def fetch_route_alternatives(
         "travelMode": "DRIVE",
         "routingPreference": "TRAFFIC_AWARE",
         "computeAlternativeRoutes": True,
-        "languageCode": "vi-VN",
+        "languageCode": "en-US",
         "units": "METRIC",
     }
 
     if requests is None:
-        raise APIIntegrationError("Thư viện 'requests' chưa được cài đặt.")
+        raise APIIntegrationError("The 'requests' library is not installed.")
 
     try:
         response = requests.post(url, headers=headers, json=body, timeout=config.request_timeout_s)
     except requests.exceptions.RequestException as e:
-        raise APIIntegrationError(f"[Google Routes API] Lỗi kết nối: {e}")
+        raise APIIntegrationError(f"[Google Routes API] Connection error: {e}")
 
     if response.status_code != 200:
         raise APIIntegrationError(
@@ -204,13 +204,13 @@ def fetch_route_alternatives(
     try:
         data = response.json()
     except json.JSONDecodeError as e:
-        raise APIIntegrationError(f"[Google Routes API] Lỗi parse JSON: {e}")
+        raise APIIntegrationError(f"[Google Routes API] JSON parse error: {e}")
 
     routes = data.get("routes", [])
     if not routes:
         raise APIIntegrationError(
-            "[Google Routes API] Không tìm thấy tuyến đường nào (routes rỗng). "
-            "Kiểm tra lại toạ độ origin/destination."
+            "[Google Routes API] No routes were found (empty routes list). "
+            "Please verify the origin/destination coordinates."
         )
 
     normalized_routes = []
@@ -226,8 +226,8 @@ def fetch_route_alternatives(
 
 
 def _parse_google_duration(duration_str: str) -> float:
-    """Google Routes API trả về duration dạng chuỗi '1234s'. Hàm này parse
-    thành số giây (float)."""
+    """Google Routes API returns duration as a string such as '1234s'. This function parses
+    it into a floating-point number of seconds."""
     try:
         return float(str(duration_str).rstrip("s"))
     except (ValueError, AttributeError):

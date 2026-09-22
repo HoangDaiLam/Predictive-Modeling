@@ -2,21 +2,21 @@
 """
 ================================================================================
 MODULE: vehicle_dynamics.py
-BƯỚC 1 — Vehicle Dynamics & Energy Physics Engine
+STEP 1 — Vehicle Dynamics & Energy Physics Engine
 ================================================================================
-Mục đích:
-    Mô phỏng chính xác động lực học và tiêu thụ năng lượng của xe điện
-    Polestar 4 Single Motor (RWD), chế độ lái Standard Mode.
+Purpose:
+        Simulate the dynamics and energy consumption of the Polestar 4 Single Motor
+        (RWD) electric vehicle in Standard drive mode.
 
-Tác giả vai trò: EV Dynamics Engineer (mô phỏng theo yêu cầu người dùng)
+Author role: EV Dynamics Engineer (simulation based on user requirements)
 
-Ghi chú kỹ thuật:
-    - Toàn bộ công thức vật lý được giữ nguyên, KHÔNG rút gọn.
-    - Đơn vị chuẩn hoá theo hệ SI (mét, kg, giây, Newton, Watt, Joule),
-      chỉ quy đổi sang kWh khi xuất kết quả cuối cùng cho người dùng.
-    - Các thông số xe được đặt làm giá trị mặc định có thể cấu hình lại
-      (constructor cho phép override toàn bộ), vì số liệu nhà sản xuất
-      có thể thay đổi theo phiên bản/thị trường.
+Technical notes:
+        - All physical formulas are kept intact and are not simplified.
+        - Units are standardized to SI (meters, kg, seconds, Newtons, Watts, Joules),
+            converting to kWh only at the final output stage for the user.
+        - Vehicle parameters are set to configurable default values
+            (the constructor allows full override), because manufacturer data can vary
+            by version and market.
 ================================================================================
 """
 
@@ -26,30 +26,30 @@ import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 
-# ------------------------------------------------------------------------
-# HẰNG SỐ VẬT LÝ TOÀN CỤC
-# ------------------------------------------------------------------------
-GRAVITY: float = 9.80665            # gia tốc trọng trường chuẩn (m/s^2)
-AIR_DENSITY_SEA_LEVEL: float = 1.225  # khối lượng riêng không khí ở 15°C, mực nước biển (kg/m^3)
+ # ------------------------------------------------------------------------
+ # GLOBAL PHYSICAL CONSTANTS
+ # ------------------------------------------------------------------------
+GRAVITY: float = 9.80665            # standard gravitational acceleration (m/s^2)
+AIR_DENSITY_SEA_LEVEL: float = 1.225  # air density at 15°C, sea level (kg/m^3)
 
 
 def air_density_at_temperature(temp_celsius: float, pressure_pa: float = 101325.0) -> float:
     """
-    Tính khối lượng riêng không khí (rho) theo nhiệt độ thực tế, dùng phương
-    trình khí lý tưởng: rho = P / (R_specific * T)
+    Calculate air density (rho) from the actual temperature using the ideal gas law:
+    rho = P / (R_specific * T)
 
-    Điều này QUAN TRỌNG trong mùa đông vì không khí lạnh đặc hơn không khí ấm,
-    làm tăng lực cản khí động học (F_aero) so với giả định rho = 1.225 kg/m^3
-    (vốn chỉ đúng ở 15°C).
+    This is important in winter because cold air is denser than warm air,
+    which increases aerodynamic drag (F_aero) relative to the assumption
+    rho = 1.225 kg/m^3 (which is only valid at 15°C).
 
     Args:
-        temp_celsius: nhiệt độ môi trường (°C)
-        pressure_pa: áp suất khí quyển (Pa), mặc định 1 atm
+        temp_celsius: ambient temperature (°C)
+        pressure_pa: atmospheric pressure (Pa), default 1 atm
 
     Returns:
         rho (kg/m^3)
     """
-    R_SPECIFIC_AIR = 287.058  # hằng số khí riêng của không khí khô (J/(kg·K))
+    R_SPECIFIC_AIR = 287.058  # specific gas constant for dry air (J/(kg·K))
     temp_kelvin = temp_celsius + 273.15
     rho = pressure_pa / (R_SPECIFIC_AIR * temp_kelvin)
     return rho
@@ -58,87 +58,84 @@ def air_density_at_temperature(temp_celsius: float, pressure_pa: float = 101325.
 @dataclass
 class Polestar4Dynamics:
     """
-    Class OOP đại diện cho toàn bộ thông số vật lý & mô hình động lực học
-    của Polestar 4 Single Motor (Long Range Single Motor, RWD).
+    OOP class representing the full physical parameters and dynamics model of the
+    Polestar 4 Single Motor (Long Range Single Motor, RWD).
 
-    Thông số mặc định dựa trên số liệu công bố gần đúng của nhà sản xuất
-    cho phiên bản Single Motor (có thể hiệu chỉnh qua constructor nếu có
-    số liệu chính xác hơn từ Polestar cho thị trường/model-year cụ thể).
+    Default values are based on approximate published specifications from the
+    manufacturer for the Single Motor version (can be adjusted in the constructor
+    if more precise Polestar data is available for a specific market/model year).
     """
 
-    # ---------------- Thông số khối lượng & hình học ----------------
-    curb_mass_kg: float = 2350.0          # khối lượng bản thân xe (kg)
-    payload_kg: float = 150.0             # tải trọng bổ sung (người + hành lý), mặc định 2 người
-    frontal_area_m2: float = 2.75         # diện tích mặt cắt ngang chính diện A (m^2)
-    drag_coefficient_cd: float = 0.27     # hệ số cản gió Cd (Single Motor, không active spoiler)
-    wheel_radius_m: float = 0.36          # bán kính bánh xe (tương ứng lốp 20-21 inch) (m)
-    rolling_resistance_coeff: float = 0.009  # hệ số cản lăn Crr (lốp EV low rolling resistance)
+    # ---------------- Mass and geometry parameters ----------------
+    curb_mass_kg: float = 2350.0          # vehicle curb mass (kg)
+    payload_kg: float = 150.0             # additional payload (people + luggage), default for 2 occupants
+    frontal_area_m2: float = 2.75         # frontal area A (m^2)
+    drag_coefficient_cd: float = 0.27     # aerodynamic drag coefficient Cd (Single Motor, no active spoiler)
+    wheel_radius_m: float = 0.36          # wheel radius (corresponding to 20–21 inch tires) (m)
+    rolling_resistance_coeff: float = 0.009  # rolling resistance coefficient Crr (low rolling resistance EV tires)
 
-    # ---------------- Thông số hệ truyền động (Single Motor) ----------------
-    motor_peak_power_kw: float = 200.0     # công suất định mức động cơ sau (kW)
-    drivetrain_efficiency: float = 0.91    # hiệu suất truyền động tổng hợp
-                                            # (inverter + motor + hộp số 1 cấp + vi sai)
-    max_regen_power_kw: float = 150.0      # công suất phanh tái sinh tối đa
+    # ---------------- Drivetrain parameters (Single Motor) ----------------
+    motor_peak_power_kw: float = 200.0     # rear motor rated power (kW)
+    drivetrain_efficiency: float = 0.91    # combined drivetrain efficiency
+                                            # (inverter + motor + single-speed gearbox + differential)
+    max_regen_power_kw: float = 150.0      # maximum regenerative braking power
 
-    # ---------------- Thông số pin ----------------
-    battery_gross_capacity_kwh: float = 94.0   # dung lượng pin tổng (gross)
-    battery_usable_capacity_kwh: float = 92.0  # dung lượng pin khả dụng (usable, sau buffer BMS)
-    battery_nominal_voltage_v: float = 400.0   # điện áp danh định hệ thống pin
+    # ---------------- Battery parameters ----------------
+    battery_gross_capacity_kwh: float = 94.0   # gross battery capacity
+    battery_usable_capacity_kwh: float = 92.0  # usable battery capacity (after BMS buffer)
+    battery_nominal_voltage_v: float = 400.0   # nominal battery system voltage
 
-    # ---------------- Hiệu suất phụ trợ hệ thống điện ----------------
-    aux_power_baseline_kw: float = 0.45    # công suất phụ tải cơ bản 12V/hệ thống điện tử
-                                            # (đèn, màn hình, bơm nước làm mát cơ bản, ECU...)
+    # ---------------- Auxiliary electrical system efficiency ----------------
+    aux_power_baseline_kw: float = 0.45    # baseline 12V/electrical auxiliary load
+                                            # (lights, display, basic cooling pump, ECU, ...)
     drag_coefficient_regen_efficiency: float = 0.70
-    # ^ hiệu suất chuyển đổi năng lượng động năng -> điện năng nạp lại pin khi phanh tái sinh
-    #   (đã tính đến tổn hao qua motor hoạt động như máy phát + inverter + BMS charge losses)
+    # ^ conversion efficiency from kinetic energy to electrical energy recharged into the battery during regenerative braking
+    #   (including losses through the motor acting as a generator, inverter and BMS charge losses)
 
     def __post_init__(self):
         self.total_mass_kg: float = self.curb_mass_kg + self.payload_kg
 
     # ====================================================================
-    # 1. LỰC CẢN KHÔNG KHÍ (Aerodynamic Drag Force)
+    # 1. AERODYNAMIC DRAG FORCE
     # ====================================================================
     def compute_aero_drag_force(self, velocity_mps: float, air_density: float = AIR_DENSITY_SEA_LEVEL) -> float:
         """
-        Công thức lực cản khí động học:
+        Aerodynamic drag force formula:
             F_aero = 0.5 * rho * Cd * A * v^2
 
-        Trong đó:
-            rho  : khối lượng riêng không khí (kg/m^3) — dùng air_density_at_temperature()
-                   khi mô phỏng mùa đông để có kết quả chính xác hơn.
-            Cd   : hệ số cản gió (không thứ nguyên)
-            A    : diện tích mặt cắt ngang (m^2)
-            v    : vận tốc tương đối giữa xe và không khí (m/s)
-                   (giả định không có gió ngang/ngược, v = vận tốc xe)
+        Where:
+            rho  : air density (kg/m^3) — use air_density_at_temperature() for more accurate winter simulations.
+            Cd   : aerodynamic drag coefficient (dimensionless)
+            A    : frontal area (m^2)
+            v    : relative speed between the vehicle and the air (m/s)
+                   (assuming no crosswind or headwind, v = vehicle speed)
 
-        Lưu ý: lực này luôn cản trở chuyển động (luôn dương khi v > 0),
-        và tăng theo BÌNH PHƯƠNG vận tốc — đây là lý do tốc độ cao tiêu
-        hao pin nhanh hơn nhiều so với tốc độ trung bình.
+        Note: this force always resists motion (always positive when v > 0),
+        and it increases with the square of speed — which is why high-speed driving
+        consumes significantly more energy than average-speed cruising.
         """
         v = abs(velocity_mps)
         f_aero = 0.5 * air_density * self.drag_coefficient_cd * self.frontal_area_m2 * (v ** 2)
         return f_aero
 
     # ====================================================================
-    # 2. LỰC MA SÁT LĂN (Rolling Resistance Force)
+    # 2. ROLLING RESISTANCE FORCE
     # ====================================================================
     def compute_rolling_resistance_force(self, grade_angle_rad: float = 0.0) -> float:
         """
-        Công thức lực cản lăn:
+        Rolling resistance force formula:
             F_roll = Crr * m * g * cos(theta)
 
-        Trong đó:
-            Crr   : hệ số cản lăn của lốp xe
-            m     : tổng khối lượng xe (kg) = curb_mass + payload
-            g     : gia tốc trọng trường (m/s^2)
-            theta : góc dốc của mặt đường (rad). cos(theta) hiệu chỉnh thành
-                    phần trọng lực VUÔNG GÓC với mặt đường (áp lực pháp
-                    tuyến lên lốp), vì lực ma sát lăn tỉ lệ với lực pháp tuyến
-                    chứ không phải trọng lượng toàn phần.
+        Where:
+            Crr   : tire rolling resistance coefficient
+            m     : total vehicle mass (kg) = curb_mass + payload
+            g     : gravitational acceleration (m/s^2)
+            theta : road grade angle (rad). cos(theta) adjusts for the component of gravity
+                    perpendicular to the road surface, because rolling resistance depends on
+                    normal force rather than total weight.
 
-        Ở góc dốc nhỏ (đường thực tế thường < 15°), cos(theta) ≈ 1, nhưng
-        ta vẫn giữ đầy đủ công thức để đảm bảo độ chính xác khi mô phỏng
-        đèo dốc lớn.
+        At small grade angles (typical roads are usually under 15°), cos(theta) ≈ 1,
+        but we keep the full formula to maintain accuracy in steep-hill simulations.
         """
         f_roll = (
             self.rolling_resistance_coeff
@@ -149,19 +146,18 @@ class Polestar4Dynamics:
         return f_roll
 
     # ====================================================================
-    # 3. LỰC LEO DỐC (Grade / Gravitational Force)
+    # 3. GRADE / GRAVITATIONAL FORCE
     # ====================================================================
     def compute_grade_force(self, grade_angle_rad: float) -> float:
         """
-        Công thức lực trọng trường theo phương dốc:
+        Gravitational force along the grade:
             F_grade = m * g * sin(theta)
 
-        theta > 0  => đường lên dốc (xe phải sinh thêm lực đẩy, tốn năng lượng)
-        theta < 0  => đường xuống dốc (trọng lực hỗ trợ xe, có thể tái sinh)
+        theta > 0  => uphill (vehicle must generate extra tractive force, consuming energy)
+        theta < 0  => downhill (gravity assists the vehicle and may allow regenerative recovery)
 
-        theta được tính từ độ dốc phần trăm (grade %) hoặc từ dữ liệu độ cao
-        (elevation) chia cho khoảng cách ngang, thông qua hàm tiện ích
-        grade_percent_to_radians() bên dưới.
+        theta is calculated from grade percentage (grade %) or from elevation data divided by
+        horizontal distance via the grade_percent_to_radians() helper below.
         """
         f_grade = self.total_mass_kg * GRAVITY * math.sin(grade_angle_rad)
         return f_grade
@@ -169,43 +165,42 @@ class Polestar4Dynamics:
     @staticmethod
     def grade_percent_to_radians(grade_percent: float) -> float:
         """
-        Quy đổi độ dốc theo phần trăm (grade %, ví dụ Google Maps/GPS dùng)
-        sang góc radian.
+        Convert grade percentage (grade %, as used by Google Maps/GPS) into radians.
 
-        Định nghĩa grade %:  grade% = (delta_elevation / delta_horizontal_distance) * 100
+        Definition: grade% = (delta_elevation / delta_horizontal_distance) * 100
         => tan(theta) = grade% / 100
         => theta = arctan(grade% / 100)
         """
         return math.atan(grade_percent / 100.0)
 
     # ====================================================================
-    # 4. LỰC GIA TỐC / ĐỘNG NĂNG (Inertial / Acceleration Force)
+    # 4. INERTIAL / ACCELERATION FORCE
     # ====================================================================
     def compute_acceleration_force(self, acceleration_mps2: float) -> float:
         """
-        Định luật II Newton:
+        Newton's second law:
             F_accel = m * a
 
-        a > 0: xe đang tăng tốc (tiêu thụ thêm năng lượng để tích luỹ động năng)
-        a < 0: xe đang giảm tốc (động năng được giải phóng, có thể thu hồi
-               một phần qua phanh tái sinh — xem compute_regenerative_energy())
+        a > 0: the vehicle is accelerating (consumes extra energy to build kinetic energy)
+        a < 0: the vehicle is decelerating (kinetic energy is released and may be partially recovered
+               through regenerative braking — see compute_regenerative_energy())
 
-        Ngoài ra ta có thể tính trực tiếp biến thiên động năng:
+        We can also calculate the kinetic energy change directly:
             delta_KE = 0.5 * m * (v_end^2 - v_start^2)
-        Hàm compute_kinetic_energy_delta() bên dưới dùng công thức này để
-        kiểm chứng chéo (cross-check) với tích phân lực theo quãng đường.
+        The compute_kinetic_energy_delta() function below uses this expression to cross-check the
+        force-based path integration.
         """
         f_accel = self.total_mass_kg * acceleration_mps2
         return f_accel
 
     def compute_kinetic_energy_delta(self, v_start_mps: float, v_end_mps: float) -> float:
         """
-        Biến thiên động năng: delta_KE = 0.5 * m * (v_end^2 - v_start^2)   [Joule]
+        Change in kinetic energy: delta_KE = 0.5 * m * (v_end^2 - v_start^2)   [Joule]
         """
         return 0.5 * self.total_mass_kg * (v_end_mps ** 2 - v_start_mps ** 2)
 
     # ====================================================================
-    # 5. TỔNG HỢP LỰC & CÔNG SUẤT TỨC THỜI
+    # 5. FORCE AND INSTANTANEOUS POWER SUMMATION
     # ====================================================================
     def compute_total_tractive_force(
         self,
@@ -215,14 +210,13 @@ class Polestar4Dynamics:
         air_density: float = AIR_DENSITY_SEA_LEVEL,
     ) -> Dict[str, float]:
         """
-        Tổng hợp lực kéo cần thiết tại bánh xe:
+        Combine the tractive force required at the wheel:
             F_total = F_aero + F_roll + F_grade + F_accel
 
-        Đây là phương trình cân bằng lực dọc trục xe theo mô hình
-        "point-mass longitudinal vehicle dynamics" tiêu chuẩn trong
-        ngành kỹ thuật ô tô điện.
+        This is the longitudinal force balance equation for a point-mass vehicle model,
+        a standard formulation in electric vehicle engineering.
 
-        Trả về dict chi tiết từng thành phần lực để phục vụ phân tích/debug.
+        Returns a dict with detailed force components for analysis/debugging.
         """
         f_aero = self.compute_aero_drag_force(velocity_mps, air_density)
         f_roll = self.compute_rolling_resistance_force(grade_angle_rad)
@@ -247,19 +241,19 @@ class Polestar4Dynamics:
         air_density: float = AIR_DENSITY_SEA_LEVEL,
     ) -> float:
         """
-        Công suất tại bánh xe (trước khi qua hiệu suất truyền động):
+        Wheel power (before drivetrain efficiency losses):
             P_wheel = F_total * v
 
-        Nếu P_wheel > 0: xe cần lực kéo (motor hoạt động ở chế độ driving)
-        Nếu P_wheel < 0: xe cần lực hãm (motor có thể hoạt động ở chế độ
-                          phanh tái sinh — xem compute_regenerative_energy())
+        If P_wheel > 0: the vehicle requires tractive effort (motor operates in driving mode)
+        If P_wheel < 0: the vehicle requires braking force (motor can operate in regenerative
+                        braking mode — see compute_regenerative_energy())
         """
         forces = self.compute_total_tractive_force(velocity_mps, acceleration_mps2, grade_angle_rad, air_density)
         p_wheel = forces["f_total_N"] * velocity_mps
         return p_wheel
 
     # ====================================================================
-    # 6. CÔNG SUẤT PIN (đã tính hiệu suất truyền động + phanh tái sinh)
+    # 6. BATTERY POWER (including drivetrain efficiency + regenerative braking)
     # ====================================================================
     def compute_battery_power_w(
         self,
@@ -270,25 +264,24 @@ class Polestar4Dynamics:
         include_aux_load: bool = True,
     ) -> Dict[str, float]:
         """
-        Chuyển công suất bánh xe (P_wheel) thành công suất rút ra từ pin
-        (P_battery), có phân biệt 2 chế độ vận hành:
+        Convert wheel power (P_wheel) into power drawn from the battery (P_battery),
+        distinguishing between two operating modes:
 
-        (a) CHẾ ĐỘ KÉO (Driving, P_wheel >= 0):
+        (a) DRIVING MODE (P_wheel >= 0):
             P_battery = P_wheel / eta_drivetrain + P_aux
-            (chia cho hiệu suất vì có tổn hao qua motor + inverter + hộp số)
+            (divide by efficiency because of losses in the motor + inverter + gearbox)
 
-        (b) CHẾ ĐỘ PHANH TÁI SINH (Regenerative Braking, P_wheel < 0):
+        (b) REGENERATIVE BRAKING MODE (P_wheel < 0):
             P_battery = P_wheel * eta_regen_total + P_aux
-            (nhân với hiệu suất vì đây là dòng năng lượng NẠP LẠI pin,
-             luôn có tổn hao trong quá trình chuyển đổi ngược động năng
-             -> điện năng; giới hạn bởi max_regen_power_kw của motor/inverter)
+            (multiply by efficiency because this is energy being fed back into the battery,
+             with losses during conversion from kinetic energy to electrical energy; limited by
+             the motor/inverter max_regen_power_kw)
 
-        P_aux: phụ tải điện cơ bản (không tính HVAC — HVAC được cộng riêng
-               ở module winter_hvac.py để tách bạch vật lý thuần tuý xe
-               khỏi hệ thống nhiệt).
+        P_aux: baseline auxiliary electrical load (excluding HVAC — HVAC is added separately
+               in winter_hvac.py to keep the pure vehicle physics distinct from thermal systems).
 
-        Trả về công suất dương = pin đang XẢ (tiêu thụ),
-        công suất âm = pin đang SẠC (thu hồi năng lượng).
+        Returns positive power = battery discharging (consumption),
+        negative power = battery charging (recovery).
         """
         p_wheel = self.compute_wheel_power_w(velocity_mps, acceleration_mps2, grade_angle_rad, air_density)
         p_aux_w = self.aux_power_baseline_kw * 1000.0 if include_aux_load else 0.0
@@ -315,7 +308,7 @@ class Polestar4Dynamics:
         }
 
     # ====================================================================
-    # 7. MÔ PHỎNG TIÊU THỤ NĂNG LƯỢNG THEO CHU TRÌNH VẬN TỐC (DRIVE CYCLE)
+    # 7. ENERGY CONSUMPTION SIMULATION FOR A DRIVING CYCLE
     # ====================================================================
     def simulate_drive_cycle(
         self,
@@ -325,28 +318,26 @@ class Polestar4Dynamics:
         air_density_profile: Optional[List[float]] = None,
     ) -> Dict[str, float]:
         """
-        Tích phân số (numerical integration) công suất pin theo thời gian
-        để tính tổng năng lượng tiêu thụ trên một chu trình lái (drive cycle)
-        rời rạc hoá, dùng phương pháp hình thang (trapezoidal rule) đơn giản
-        hoá thành hình chữ nhật (rectangular/Euler) trên từng bước dt:
+        Numerically integrate battery power over time to calculate the total energy consumed
+        over a discretized drive cycle using a simplified rectangular/Euler method on each step dt:
 
             E_battery = sum( P_battery(t_i) * dt_i )   với dt_i = t_(i+1) - t_i
 
-        Gia tốc tức thời tại mỗi bước được xấp xỉ:
+        Instantaneous acceleration at each step is approximated as:
             a_i = (v_(i+1) - v_i) / dt_i
 
         Args:
-            time_s: danh sách mốc thời gian (giây), tăng dần
-            velocity_profile_mps: vận tốc xe tại từng mốc thời gian (m/s)
-            grade_profile_rad: góc dốc tại từng mốc (rad); mặc định 0 (đường bằng)
-            air_density_profile: rho tại từng mốc (kg/m^3); mặc định chuẩn mực nước biển
+            time_s: list of time stamps (seconds), increasing over the cycle
+            velocity_profile_mps: vehicle speed at each time stamp (m/s)
+            grade_profile_rad: grade angle at each time stamp (rad); default 0 (flat road)
+            air_density_profile: rho at each time stamp (kg/m^3); default sea-level reference
 
         Returns:
-            Dict chứa tổng năng lượng tiêu thụ (kWh), năng lượng tái sinh (kWh),
-            quãng đường (km), và phần trăm pin tiêu thụ (% of usable capacity).
+            Dict with total energy consumed (kWh), recovered regenerative energy (kWh),
+            distance traveled (km), and battery percentage consumed (% of usable capacity).
         """
         n = len(time_s)
-        assert n == len(velocity_profile_mps), "time_s và velocity_profile_mps phải cùng độ dài"
+        assert n == len(velocity_profile_mps), "time_s and velocity_profile_mps must have the same length"
 
         if grade_profile_rad is None:
             grade_profile_rad = [0.0] * n
@@ -400,7 +391,7 @@ class Polestar4Dynamics:
         }
 
     # ====================================================================
-    # 8. TÍNH NĂNG LƯỢNG CHO MỘT ĐOẠN ĐƯỜNG ĐƠN GIẢN HOÁ (steady-state segment)
+    # 8. ENERGY CALCULATION FOR A SIMPLIFIED ROAD SEGMENT (steady-state segment)
     # ====================================================================
     def compute_segment_energy_kwh(
         self,
@@ -410,18 +401,17 @@ class Polestar4Dynamics:
         air_density: float = AIR_DENSITY_SEA_LEVEL,
     ) -> float:
         """
-        Ước tính năng lượng tiêu thụ cho MỘT ĐOẠN ĐƯỜNG ở tốc độ trung bình
-        ổn định (steady-state, a = 0) — dùng cho bài toán tối ưu tuyến đường
-        (route optimization) ở Bước 4, nơi ta có dữ liệu độ dốc & khoảng
-        cách theo từng đoạn (segment) từ API bản đồ, nhưng không có chu trình
-        vận tốc chi tiết theo giây.
+        Estimate the energy consumption for ONE ROAD SEGMENT at a constant average speed
+        (steady-state, a = 0) — used for route optimization in Step 4, where we have
+        segment-level grade and distance data from map APIs but no detailed second-by-second
+        speed profile.
 
             time_s = distance_m / avg_speed_mps
             E = P_battery(steady-state) * time_s
 
-        Đây là mô hình steady-state hợp lệ vì giả định xe di chuyển ở tốc độ
-        trung bình ổn định trên đoạn đường đó (a=0), phù hợp cho đoạn cao tốc/
-        tỉnh lộ dài. Với đoạn đô thị nhiều dừng-đi, nên dùng simulate_drive_cycle().
+        This is a valid steady-state model because it assumes the vehicle travels at a
+        constant average speed over the segment (a=0), which is suitable for long highway or
+        intercity road segments. For urban segments with repeated stops, use simulate_drive_cycle().
         """
         if avg_speed_mps <= 0:
             return 0.0
