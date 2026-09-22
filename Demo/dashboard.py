@@ -242,7 +242,7 @@ if "last_result" in st.session_state:
 
     df_compare = pd.DataFrame(comparison_rows)
     st.dataframe(
-        df_compare.style.highlight_min(subset=["Energy Consumption (kWh)"], color="#d4f7dc"),
+        df_compare.style.highlight_min(subset=["Total Energy (kWh)"], color="#d4f7dc"),
         hide_index=True,
         use_container_width=True,
     )
