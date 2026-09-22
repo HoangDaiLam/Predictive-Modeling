@@ -54,6 +54,15 @@ def air_density_at_temperature(temp_celsius: float, pressure_pa: float = 101325.
     rho = pressure_pa / (R_SPECIFIC_AIR * temp_kelvin)
     return rho
 
+def trapezoidal_integral(times: List[float], values: List[float]) -> float:
+    """Tích phân hình thang O(h²) — chính xác hơn Euler O(h)."""
+    if len(times) < 2:
+        return 0.0
+    return math.fsum(
+        (times[i+1] - times[i]) * (values[i] + values[i+1]) * 0.5
+        for i in range(len(times) - 1)
+    )
+
 
 @dataclass
 class Polestar4Dynamics:
@@ -353,41 +362,33 @@ class Polestar4Dynamics:
         if air_density_profile is None:
             air_density_profile = [AIR_DENSITY_SEA_LEVEL] * n
 
-        total_energy_j = 0.0          # tổng năng lượng ròng rút từ pin (Joule)
-        total_regen_energy_j = 0.0    # tổng năng lượng tái sinh thu hồi (Joule, giá trị dương)
-        total_distance_m = 0.0
+        p_battery_series = []
+        p_regen_series = []
+        v_series = list(velocity_profile_mps)
 
-        for i in range(n - 1):
-            dt = time_s[i + 1] - time_s[i]
-            if dt <= 0:
-                continue
-
-            v_i = velocity_profile_mps[i]
-            v_ip1 = velocity_profile_mps[i + 1]
-            a_i = (v_ip1 - v_i) / dt
-
-            grade_i = grade_profile_rad[i]
-            rho_i = air_density_profile[i]
+        for i in range(n):
+            if i < n - 1 and (time_s[i + 1] - time_s[i]) > 0:
+                dt_i = time_s[i + 1] - time_s[i]
+                a_i = (velocity_profile_mps[i + 1] - velocity_profile_mps[i]) / dt_i
+            else:
+                a_i = 0.0
 
             power_result = self.compute_battery_power_w(
-                velocity_mps=v_i,
+                velocity_mps=velocity_profile_mps[i],
                 acceleration_mps2=a_i,
-                grade_angle_rad=grade_i,
-                air_density=rho_i,
+                grade_angle_rad=grade_profile_rad[i],
+                air_density=air_density_profile[i],
             )
-            p_battery = power_result["p_battery_total_w"]
+            p_battery_series.append(power_result["p_battery_total_w"])
+            p_regen_series.append(-min(0.0, power_result["p_battery_traction_w"]))
 
-            energy_step_j = p_battery * dt  # Joule = Watt * giây
-            total_energy_j += energy_step_j
-
-            if power_result["mode"] == "REGEN_BRAKING" and power_result["p_battery_traction_w"] < 0:
-                total_regen_energy_j += -power_result["p_battery_traction_w"] * dt
-
-            total_distance_m += v_i * dt
+        total_energy_j       = trapezoidal_integral(time_s, p_battery_series)
+        total_regen_energy_j = trapezoidal_integral(time_s, p_regen_series)
+        total_distance_m     = trapezoidal_integral(time_s, v_series)
 
         total_energy_kwh = total_energy_j / 3_600_000.0
-        total_regen_kwh = total_regen_energy_j / 3_600_000.0
-        distance_km = total_distance_m / 1000.0
+        total_regen_kwh  = total_regen_energy_j / 3_600_000.0
+        distance_km      = total_distance_m / 1000.0
 
         battery_percent_consumed = (total_energy_kwh / self.battery_usable_capacity_kwh) * 100.0
 

@@ -75,20 +75,18 @@ class RouteCandidate:
 
     @property
     def total_distance_km(self) -> float:
-        return sum(s.distance_m for s in self.segments) / 1000.0
+        return math.fsum(s.distance_m for s in self.segments) / 1000.0
 
     @property
     def total_duration_s(self) -> float:
-        return sum(s.duration_s for s in self.segments)
+        return math.fsum(s.duration_s for s in self.segments)
 
     @property
     def total_elevation_gain_m(self) -> float:
-        """Tổng độ cao leo lên (chỉ tính các đoạn dốc lên, để mô tả 'độ dốc' tuyến)."""
-        gain = 0.0
-        for s in self.segments:
-            if s.grade_percent > 0:
-                gain += s.distance_m * (s.grade_percent / 100.0)
-        return gain
+        return math.fsum(
+            s.distance_m * (s.grade_percent / 100.0)
+            for s in self.segments if s.grade_percent > 0
+        )
 
     @property
     def max_grade_percent(self) -> float:
@@ -160,8 +158,8 @@ class RouteOptimizationEngine:
         đầu — vì trong mùa đông, % pin tiêu thụ phải tính trên dung lượng
         THỰC TẾ khai thác được, không phải dung lượng danh định lúc 25°C.
         """
-        driving_energy_kwh_total = 0.0
-        winter_overhead_kwh_total = 0.0
+        driving_energy_list: List[float] = []
+        winter_overhead_list: List[float] = []
         segment_breakdown: List[Dict[str, Any]] = []
 
         for i, seg in enumerate(route.segments):
@@ -191,8 +189,8 @@ class RouteOptimizationEngine:
             )
             winter_overhead_kwh = winter_result["total_winter_overhead_kwh"]
 
-            driving_energy_kwh_total += driving_energy_kwh
-            winter_overhead_kwh_total += winter_overhead_kwh
+            driving_energy_list.append(driving_energy_kwh)
+            winter_overhead_list.append(winter_overhead_kwh)
 
             segment_breakdown.append({
                 "segment_index": i,
@@ -205,7 +203,11 @@ class RouteOptimizationEngine:
                 "segment_total_kwh": round(driving_energy_kwh + winter_overhead_kwh, 4),
             })
 
-        total_energy_kwh = driving_energy_kwh_total + winter_overhead_kwh_total
+        driving_energy_kwh_total = math.fsum(driving_energy_list)
+        winter_overhead_kwh_total = math.fsum(winter_overhead_list)
+        total_energy_kwh = math.fsum([
+            driving_energy_kwh_total, winter_overhead_kwh_total
+        ])
 
         # --- Dung lượng pin khả dụng hiệu dụng theo nhiệt độ pin ban đầu ---
         ref_battery_temp = (
