@@ -53,7 +53,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🔋 Polestar 4 Single Motor — Winter Battery Energy AI Engine")
+st.title("Polestar 4 Single Motor — Winter Battery Energy AI Engine")
 st.caption(
     "Predicting and optimizing battery consumption for the Polestar 4 Single Motor (Standard Mode) in harsh winter conditions."
 )
@@ -126,7 +126,7 @@ with col1:
     st.metric(
         "Cabin heating power",
         f"{hvac_power_result['total_hvac_electric_power_kw']:.2f} kW",
-        help=f"COP bơm nhiệt hiện tại: {hvac_power_result['heat_pump_cop']:.2f}",
+        help=f"Current COP of the heat pump: {hvac_power_result['heat_pump_cop']:.2f}",
     )
 with col2:
     st.metric(
@@ -147,11 +147,11 @@ with col4:
         help="The increase in battery internal resistance at low temperatures leads to higher losses during high‑current charging and discharging.",
     )
 
-with st.expander("🔍 Chi tiết phân rã công suất HVAC"):
+with st.expander("Detailed HVAC Power Decomposition"):
     hvac_detail_df = pd.DataFrame([
-        {"Thành phần": "Heat Pump", "Electric Power (kW)": hvac_power_result["heat_pump_electric_power_kw"]},
-        {"Thành phần": "PTC Backup Heater", "Electric Power (kW)": hvac_power_result["ptc_backup_electric_power_kw"]},
-        {"Thành phần": "TOTAL", "Electric Power (kW)": hvac_power_result["total_hvac_electric_power_kw"]},
+        {"Component": "Heat Pump", "Electric Power (kW)": hvac_power_result["heat_pump_electric_power_kw"]},
+        {"Component": "PTC Backup Heater", "Electric Power (kW)": hvac_power_result["ptc_backup_electric_power_kw"]},
+        {"Component": "TOTAL", "Electric Power (kW)": hvac_power_result["total_hvac_electric_power_kw"]},
     ])
     st.dataframe(hvac_detail_df, hide_index=True, use_container_width=True)
 
@@ -206,12 +206,12 @@ if run_button:
 
             route_direct = RouteCandidate(
                 route_name="Route 1: Direct Mountain",
-                description="Quãng đường ngắn hơn nhưng có nhiều đoạn dốc đứng",
+                description="Shorter route with several steep inclines",
                 segments=profile_to_segments(mock_profile_direct, 70, 45.0, ambient_temp_c),
             )
             route_flat = RouteCandidate(
-                route_name="Tuyến 2: Đường vòng bằng phẳng",
-                description="Quãng đường xa hơn khoảng 15-20% nhưng gần như không dốc",
+                route_name="Route 2: Flat Loop",
+                description="The route is longer, but it's almost completely flat.",
                 segments=profile_to_segments(mock_profile_flat, 90, 54.0, ambient_temp_c),
             )
             routes = [route_direct, route_flat]
@@ -223,26 +223,26 @@ if "last_result" in st.session_state:
     result = st.session_state["last_result"]
 
     # ---- Bảng so sánh tổng quan ----
-    st.subheader("📊 Bảng so sánh các tuyến đường")
+    st.subheader("Comparison Table of Routes")
 
     comparison_rows = []
     optimal_name = result["optimal_route"]["route_name"]
     for r in result["all_results"]:
         comparison_rows.append({
-            "Tuyến đường": ("⭐ " if r["route_name"] == optimal_name else "") + r["route_name"],
-            "Mô tả": r["description"],
-            "Quãng đường (km)": r["distance_km"],
-            "Thời gian (phút)": r["duration_min"],
-            "Năng lượng di chuyển (kWh)": r["driving_energy_kwh"],
-            "Hao hụt mùa đông (kWh)": r["winter_overhead_kwh"],
-            "TỔNG năng lượng (kWh)": r["total_energy_kwh"],
-            "% Pin tiêu thụ": r["battery_percent_consumed"],
-            "Độ dốc max (%)": r["max_grade_percent"],
+            "Route": ("⭐ " if r["route_name"] == optimal_name else "") + r["route_name"],
+            "Description": r["description"],
+            "Distance (km)": r["distance_km"],
+            "Duration (min)": r["duration_min"],
+            "Driving Energy (kWh)": r["driving_energy_kwh"],
+            "Winter Overhead (kWh)": r["winter_overhead_kwh"],
+            "Total Energy (kWh)": r["total_energy_kwh"],
+            "Battery Percent Consumed": r["battery_percent_consumed"],
+            "Max Grade (%)": r["max_grade_percent"],
         })
 
     df_compare = pd.DataFrame(comparison_rows)
     st.dataframe(
-        df_compare.style.highlight_min(subset=["TỔNG năng lượng (kWh)"], color="#d4f7dc"),
+        df_compare.style.highlight_min(subset=["Energy Consumption (kWh)"], color="#d4f7dc"),
         hide_index=True,
         use_container_width=True,
     )
@@ -250,28 +250,27 @@ if "last_result" in st.session_state:
     # ---- Biểu đồ so sánh trực quan ----
     chart_df = pd.DataFrame([
         {
-            "Tuyến đường": r["route_name"],
-            "Năng lượng di chuyển": r["driving_energy_kwh"],
-            "Hao hụt mùa đông (HVAC+BTMS)": r["winter_overhead_kwh"],
+            "Route": r["route_name"],
+            "Driving Energy": r["driving_energy_kwh"],
+            "Winter Overhead (HVAC+BTMS)": r["winter_overhead_kwh"],
         }
         for r in result["all_results"]
-    ]).set_index("Tuyến đường")
+    ]).set_index("Route")
     st.bar_chart(chart_df)
 
     # ---- Giải thích quyết định tối ưu ----
-    st.subheader("🧠 Giải thích quyết định của AI Engine")
+    st.subheader("Explanation of the AI Engine's Decision")
     st.info(result["explanation"])
 
     # ---- Chi tiết từng đoạn của tuyến tối ưu ----
-    with st.expander("🔬 Chi tiết từng đoạn đường của tuyến TỐI ƯU"):
+    with st.expander("Detailed Breakdown of Segments in the Optimal Route"):
         seg_df = pd.DataFrame(result["optimal_route"]["segment_breakdown"])
         st.dataframe(seg_df, hide_index=True, use_container_width=True)
 
 else:
-    st.info("👈 Nhập thông tin ở thanh bên trái và nhấn **'Chạy phân tích & Tối ưu tuyến đường'** để bắt đầu.")
+    st.info("Enter information in the left sidebar and click **'Run Analysis & Optimize Route'** to get started.")
 
 st.divider()
 st.caption(
-    "⚠️ Lưu ý: Đây là công cụ mô phỏng/dự đoán dựa trên mô hình vật lý và dữ liệu ước tính. "
-    "Kết quả thực tế có thể khác biệt tuỳ điều kiện vận hành, phong cách lái, tình trạng pin thực tế."
+    "Actual results will vary depending on operating conditions, driving style, real-time battery status, and other factors"
 )
