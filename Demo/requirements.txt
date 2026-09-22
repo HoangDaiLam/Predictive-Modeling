@@ -1,0 +1,7 @@
+requests>=2.31.0
+streamlit>=1.35.0
+pandas>=2.0.0
+
+# Tuỳ chọn (chỉ cần nếu triển khai kiến trúc mở rộng FastAPI, xem README.md)
+fastapi>=0.110.0
+uvicorn>=0.29.0
