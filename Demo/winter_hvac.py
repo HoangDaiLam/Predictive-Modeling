@@ -56,6 +56,11 @@ class WinterHVACSimulation:
     air_specific_heat_j_kgk: float = 1005.0  # nhiệt dung riêng không khí (J/(kg·K))
 
     cabin_target_temp_c: float = 22.0     # nhiệt độ cabin mục tiêu (chế độ sưởi bình thường)
+    cabin_air_mass_kg: float = 4.0           # không khí trong cabin (~3.2 m³ × 1.25 kg/m³)
+    cabin_interior_mass_kg: float = 36.0     # nội thất (ghế, tap-lô, ốp) quy đổi tương đương
+    cabin_interior_specific_heat_j_kgk: float = 1100.0
+    hvac_cop_warmup_avg: float = 2.0         # COP trung bình trong giai đoạn warm-up (thấp hơn steady)
+    occupants_count: int = 2                 # số người trên xe → trừ nhiệt cơ thể tỏa ra
 
     # ---------------- Thông số bơm nhiệt (Heat Pump) cho HVAC cabin ----------------
     heat_pump_cop_at_0c: float = 3.0      # COP của bơm nhiệt tại 0°C
@@ -135,7 +140,9 @@ class WinterHVACSimulation:
         mdot_air_kg_s = (self.hvac_fresh_air_flow_m3_per_h / 3600.0) * self.air_density_kg_m3
         q_air_w = mdot_air_kg_s * self.air_specific_heat_j_kgk * delta_t
 
-        q_total_w = q_conduction_w + q_air_w
+        # Nhiệt cơ thể tỏa: ~100 W/người, trừ vào tải nhiệt
+        q_body_w = 100.0 * self.occupants_count
+        q_total_w = max(q_conduction_w + q_air_w - q_body_w, 0.0)
 
         return {
             "q_conduction_w": q_conduction_w,
@@ -300,6 +307,35 @@ class WinterHVACSimulation:
         """
         factor = self.compute_capacity_fade_factor(battery_temp_c)
         return nominal_usable_capacity_kwh * factor
+
+    def compute_cabin_warmup_energy_kwh(self, cabin_start_temp_c: float) -> float:
+        """Năng lượng điện cần để sưởi cabin từ nhiệt độ khởi hành lên target — MỘT LẦN."""
+        delta_t = max(self.cabin_target_temp_c - cabin_start_temp_c, 0.0)
+        if delta_t <= 0:
+            return 0.0
+        c_air = self.cabin_air_mass_kg * self.air_specific_heat_j_kgk
+        c_int = self.cabin_interior_mass_kg * self.cabin_interior_specific_heat_j_kgk
+        q_j = (c_air + c_int) * delta_t
+        return q_j / 3_600_000.0 / self.hvac_cop_warmup_avg
+
+    def compute_battery_preheat_energy_kwh(
+        self, t_start_c: float, eta_heater: float = 0.95
+    ) -> float:
+        """Tổng năng lượng điện để làm ấm pin từ t_start lên target — tính MỘT LẦN."""
+        delta_t = max(self.battery_target_temp_c - t_start_c, 0.0)
+        if delta_t <= 0:
+            return 0.0
+        q_j = self.battery_mass_kg * self.battery_specific_heat_j_kgk * delta_t
+        return q_j / 3_600_000.0 / eta_heater
+
+    def compute_battery_preheat_time_min(
+        self, t_start_c: float, eta_heater: float = 0.95
+    ) -> float:
+        """Thời gian tối thiểu để làm ấm pin với công suất heater tối đa."""
+        energy_kwh = self.compute_battery_preheat_energy_kwh(t_start_c, eta_heater)
+        if self.btms_heater_max_power_kw <= 0:
+            return 0.0
+        return energy_kwh / self.btms_heater_max_power_kw * 60.0
 
     # ========================================================================
     # D. TỔNG HỢP: HAO HỤT ĐIỆN NĂNG DO HVAC + BTMS THEO THỜI GIAN/QUÃNG ĐƯỜNG
