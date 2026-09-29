@@ -289,7 +289,7 @@ if "last_result" in st.session_state:
     optimal_name = result["optimal_route"]["route_name"]
     for r in result["all_results"]:
         comparison_rows.append({
-            "Route": ("⭐ " if r["route_name"] == optimal_name else "") + r["route_name"],
+            "Route": ("" if r["route_name"] == optimal_name else "") + r["route_name"],
             "Description": r["description"],
             "Distance (km)": r["distance_km"],
             "Duration (min)": r["duration_min"],

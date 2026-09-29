@@ -458,7 +458,7 @@ class RouteOptimizationEngine:
         all_ranked: List[RouteAnalysisResult],
     ) -> str:
         lines = [
-            f"✅ OPTIMAL ROUTE: '{optimal.route_name}' — "
+            f"OPTIMAL ROUTE: '{optimal.route_name}' — "
             f"{optimal.total_energy_kwh:.2f} kWh "
             f"({optimal.battery_percent_consumed:.2f}% battery)."
         ]
@@ -474,7 +474,7 @@ class RouteOptimizationEngine:
         delta_energy = runner_up.total_energy_kwh - optimal.total_energy_kwh
         lines.append("")
         lines.append(
-            f"📊 COMPARED TO RUNNER-UP '{runner_up.route_name}' "
+            f"COMPARED TO RUNNER-UP '{runner_up.route_name}' "
             f"({runner_up.total_energy_kwh:.2f} kWh):"
         )
         lines.append(
@@ -509,7 +509,7 @@ class RouteOptimizationEngine:
 
         if len(all_ranked) > 2:
             lines.append("")
-            lines.append("📋 Ranking (cheapest → most expensive):")
+            lines.append("Ranking (cheapest → most expensive):")
             for i, r in enumerate(all_ranked, start=1):
                 lines.append(f"   {i}. {r.route_name}: {r.total_energy_kwh:.2f} kWh")
 
