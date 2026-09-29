@@ -54,6 +54,15 @@ def air_density_at_temperature(temp_celsius: float, pressure_pa: float = 101325.
     rho = pressure_pa / (R_SPECIFIC_AIR * temp_kelvin)
     return rho
 
+def trapezoidal_integral(times: List[float], values: List[float]) -> float:
+    """Tích phân hình thang O(h²) — chính xác hơn Euler O(h)."""
+    if len(times) < 2:
+        return 0.0
+    return math.fsum(
+        (times[i+1] - times[i]) * (values[i] + values[i+1]) * 0.5
+        for i in range(len(times) - 1)
+    )
+
 
 @dataclass
 class Polestar4Dynamics:
@@ -84,6 +93,8 @@ class Polestar4Dynamics:
     battery_gross_capacity_kwh: float = 94.0   # dung lượng pin tổng (gross)
     battery_usable_capacity_kwh: float = 92.0  # dung lượng pin khả dụng (usable, sau buffer BMS)
     battery_nominal_voltage_v: float = 400.0   # điện áp danh định hệ thống pin
+
+    battery_internal_resistance_ohm: float = 0.05   # trở nội pack 400V, cần hiệu chuẩn lại nếu có datasheet
 
     # ---------------- Hiệu suất phụ trợ hệ thống điện ----------------
     aux_power_baseline_kw: float = 0.45    # công suất phụ tải cơ bản 12V/hệ thống điện tử
@@ -268,6 +279,7 @@ class Polestar4Dynamics:
         grade_angle_rad: float,
         air_density: float = AIR_DENSITY_SEA_LEVEL,
         include_aux_load: bool = True,
+        r_mult: float = 1.0,
     ) -> Dict[str, float]:
         """
         Chuyển công suất bánh xe (P_wheel) thành công suất rút ra từ pin
@@ -294,14 +306,18 @@ class Polestar4Dynamics:
         p_aux_w = self.aux_power_baseline_kw * 1000.0 if include_aux_load else 0.0
 
         if p_wheel >= 0:
-            # Chế độ kéo: tổn hao truyền động làm pin phải cấp NHIỀU hơn P_wheel
+            # Chế độ kéo: tổn hao truyền động + tổn hao I²R trong pin
             p_battery_traction = p_wheel / self.drivetrain_efficiency
+            i_pack = p_battery_traction / self.battery_nominal_voltage_v
+            p_battery_traction += i_pack * i_pack * self.battery_internal_resistance_ohm * r_mult
             mode = "DRIVING"
         else:
-            # Chế độ phanh tái sinh: giới hạn theo công suất tái sinh tối đa của motor
-            max_regen_w = -abs(self.max_regen_power_kw) * 1000.0
-            p_wheel_clamped = max(p_wheel, max_regen_w)  # không vượt quá giới hạn phần cứng
+            # Pin lạnh: nội trở cao → giới hạn regen thấp hơn
+            max_regen_w = -abs(self.max_regen_power_kw) * 1000.0 / max(r_mult, 1.0)
+            p_wheel_clamped = max(p_wheel, max_regen_w)
             p_battery_traction = p_wheel_clamped * self.drag_coefficient_regen_efficiency
+            i_pack = abs(p_battery_traction) / self.battery_nominal_voltage_v
+            p_battery_traction -= i_pack * i_pack * self.battery_internal_resistance_ohm * r_mult
             mode = "REGEN_BRAKING"
 
         p_battery_total = p_battery_traction + p_aux_w
@@ -353,41 +369,33 @@ class Polestar4Dynamics:
         if air_density_profile is None:
             air_density_profile = [AIR_DENSITY_SEA_LEVEL] * n
 
-        total_energy_j = 0.0          # tổng năng lượng ròng rút từ pin (Joule)
-        total_regen_energy_j = 0.0    # tổng năng lượng tái sinh thu hồi (Joule, giá trị dương)
-        total_distance_m = 0.0
+        p_battery_series = []
+        p_regen_series = []
+        v_series = list(velocity_profile_mps)
 
-        for i in range(n - 1):
-            dt = time_s[i + 1] - time_s[i]
-            if dt <= 0:
-                continue
-
-            v_i = velocity_profile_mps[i]
-            v_ip1 = velocity_profile_mps[i + 1]
-            a_i = (v_ip1 - v_i) / dt
-
-            grade_i = grade_profile_rad[i]
-            rho_i = air_density_profile[i]
+        for i in range(n):
+            if i < n - 1 and (time_s[i + 1] - time_s[i]) > 0:
+                dt_i = time_s[i + 1] - time_s[i]
+                a_i = (velocity_profile_mps[i + 1] - velocity_profile_mps[i]) / dt_i
+            else:
+                a_i = 0.0
 
             power_result = self.compute_battery_power_w(
-                velocity_mps=v_i,
+                velocity_mps=velocity_profile_mps[i],
                 acceleration_mps2=a_i,
-                grade_angle_rad=grade_i,
-                air_density=rho_i,
+                grade_angle_rad=grade_profile_rad[i],
+                air_density=air_density_profile[i],
             )
-            p_battery = power_result["p_battery_total_w"]
+            p_battery_series.append(power_result["p_battery_total_w"])
+            p_regen_series.append(-min(0.0, power_result["p_battery_traction_w"]))
 
-            energy_step_j = p_battery * dt  # Joule = Watt * giây
-            total_energy_j += energy_step_j
-
-            if power_result["mode"] == "REGEN_BRAKING" and power_result["p_battery_traction_w"] < 0:
-                total_regen_energy_j += -power_result["p_battery_traction_w"] * dt
-
-            total_distance_m += v_i * dt
+        total_energy_j       = trapezoidal_integral(time_s, p_battery_series)
+        total_regen_energy_j = trapezoidal_integral(time_s, p_regen_series)
+        total_distance_m     = trapezoidal_integral(time_s, v_series)
 
         total_energy_kwh = total_energy_j / 3_600_000.0
-        total_regen_kwh = total_regen_energy_j / 3_600_000.0
-        distance_km = total_distance_m / 1000.0
+        total_regen_kwh  = total_regen_energy_j / 3_600_000.0
+        distance_km      = total_distance_m / 1000.0
 
         battery_percent_consumed = (total_energy_kwh / self.battery_usable_capacity_kwh) * 100.0
 
@@ -408,6 +416,7 @@ class Polestar4Dynamics:
         avg_speed_mps: float,
         grade_angle_rad: float,
         air_density: float = AIR_DENSITY_SEA_LEVEL,
+        r_mult: float = 1.0,
     ) -> float:
         """
         Ước tính năng lượng tiêu thụ cho MỘT ĐOẠN ĐƯỜNG ở tốc độ trung bình
@@ -432,6 +441,7 @@ class Polestar4Dynamics:
             acceleration_mps2=0.0,
             grade_angle_rad=grade_angle_rad,
             air_density=air_density,
+            r_mult=r_mult,
         )
         energy_j = power_result["p_battery_total_w"] * time_s
         energy_kwh = energy_j / 3_600_000.0
