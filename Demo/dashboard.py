@@ -62,6 +62,7 @@ Cách Dashboard giao tiếp với AI Engine backend:
 ================================================================================
 """
 
+import dataclasses
 import streamlit as st
 import pandas as pd
 
@@ -114,6 +115,13 @@ with st.sidebar:
     )
 
     st.divider()
+
+    st.subheader("Battery & Optimization")
+    soc_start_pct = st.slider("Current SoC (%)", 5.0, 100.0, 80.0, 1.0)
+    reserve_pct = st.slider("Reserve SoC (%)", 0.0, 30.0, 10.0, 1.0)
+    w_energy = st.slider("Weight: energy", 0.0, 1.0, 1.0, 0.1)
+    w_time = st.slider("Weight: time", 0.0, 1.0, 0.0, 0.1)
+    preheat_on = st.checkbox("Preheat while plugged in", value=False)
 
     st.subheader("Car's Details (Advanced)")
     with st.expander("Adjust Polestar 4 weight"):
@@ -246,11 +254,33 @@ if run_button:
             )
             routes = [route_direct, route_flat]
 
-        result = engine.compare_and_optimize(routes)
+        result = engine.compare_and_optimize(
+            routes,
+            soc_start_pct=soc_start_pct,
+            reserve_pct=reserve_pct,
+            w_energy=w_energy,
+            w_time=w_time,
+        )
         st.session_state["last_result"] = result
+        st.session_state["routes"] = routes
 
 if "last_result" in st.session_state:
     result = st.session_state["last_result"]
+    # Metric arrival SoC + cảnh báo
+    opt = result["optimal_route"]
+    arrival_soc = soc_start_pct - opt["battery_percent_consumed"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Arrival SoC", f"{arrival_soc:.1f}%",
+              delta=f"{arrival_soc - reserve_pct:+.1f}% vs reserve")
+    c2.metric("Total energy", f"{opt['total_energy_kwh']:.2f} kWh")
+    c3.metric("Effective capacity",
+              f"{opt['effective_usable_capacity_kwh']:.1f} kWh")
+
+    if result.get("needs_charge"):
+        deficit = max(reserve_pct - arrival_soc, 0.0) / 100.0 * opt["effective_usable_capacity_kwh"]
+        st.error(f"Reserve violated. Charge ≥ {deficit:.1f} kWh before departure.")
+    elif arrival_soc < reserve_pct:
+        st.warning(f"Arrival SoC below reserve ({arrival_soc:.1f}% < {reserve_pct:.1f}%).")
 
     # ---- Bảng so sánh tổng quan ----
     st.subheader("Comparison Table of Routes")
@@ -259,7 +289,7 @@ if "last_result" in st.session_state:
     optimal_name = result["optimal_route"]["route_name"]
     for r in result["all_results"]:
         comparison_rows.append({
-            "Route": ("⭐ " if r["route_name"] == optimal_name else "") + r["route_name"],
+            "Route": ("" if r["route_name"] == optimal_name else "") + r["route_name"],
             "Description": r["description"],
             "Distance (km)": r["distance_km"],
             "Duration (min)": r["duration_min"],
@@ -286,11 +316,76 @@ if "last_result" in st.session_state:
         }
         for r in result["all_results"]
     ]).set_index("Route")
-    st.bar_chart(chart_df)
+    component_df = pd.DataFrame([
+        {
+            "Route": r["route_name"],
+            "Aero":     r["energy_aero_kwh"],
+            "Rolling":  r["energy_rolling_kwh"],
+            "Grade":    r["energy_grade_kwh"],
+            "HVAC":     r["energy_hvac_kwh"],
+            "BTMS":     r["energy_btms_kwh"],
+        }
+        for r in result["all_results"]
+    ]).set_index("Route")
+    st.markdown("**Energy breakdown by component**")
+    st.bar_chart(component_df)
 
     # ---- Giải thích quyết định tối ưu ----
     st.subheader("Explanation of the AI Engine's Decision")
     st.info(result["explanation"])
+
+    # Sweep nhiệt độ -25 → +5°C, xem tuyến tối ưu đổi chiều
+    if "routes" in st.session_state:
+        sweep = {}
+        for t in range(-25, 6, 5):
+            eng_t = RouteOptimizationEngine(
+                vehicle=vehicle, hvac_sim=hvac_sim,
+                battery_initial_temp_c=float(t),
+            )
+            rs = [
+                RouteCandidate(
+                    r.route_name,
+                    [dataclasses.replace(s, ambient_temp_c=float(t)) for s in r.segments],
+                    r.description,
+                )
+                for r in st.session_state["routes"]
+            ]
+            sweep[t] = {
+                a["route_name"]: a["total_energy_kwh"]
+                for a in eng_t.compare_and_optimize(rs)["all_results"]
+            }
+        st.markdown("**Temperature sweep — energy per route**")
+        st.line_chart(pd.DataFrame(sweep).T)
+
+        # Đường cong tốc độ tối ưu cho tuyến optimal (dùng segment đầu của optimal)
+        if opt.get("segment_breakdown"):
+            first_seg = opt["segment_breakdown"][0]
+            sc = engine.speed_curve(
+                grade_percent=first_seg["grade_percent"],
+                temp_c=first_seg["ambient_temp_c"],
+            )
+            sc_df = pd.DataFrame(
+                sc["curve"], columns=["Speed (km/h)", "kWh/km"]
+            ).set_index("Speed (km/h)")
+            st.markdown(
+                f"**Optimal speed for first segment**: "
+                f"{sc['v_opt_kmh']} km/h → {sc['kwh_per_km_opt']:.4f} kWh/km"
+            )
+            st.line_chart(sc_df)
+
+        if st.button("Run Monte Carlo (300 samples)"):
+            with st.spinner("Sampling..."):
+                mc = engine.monte_carlo_route(st.session_state["routes"][0], n_samples=300)
+            st.markdown(
+                f"**Monte Carlo for '{st.session_state['routes'][0].route_name}'**  \n"
+                f"P10 = {mc['p10']:.2f} kWh | "
+                f"P50 = {mc['p50']:.2f} kWh | "
+                f"P90 = {mc['p90']:.2f} kWh | "
+                f"mean = {mc['mean']:.2f} kWh"
+            )
+            st.info(
+                f"Plan for **P90 = {mc['p90']:.2f} kWh** to have 90% confidence."
+            )
 
     # ---- Chi tiết từng đoạn của tuyến tối ưu ----
     with st.expander("Detailed Breakdown of Segments in the Optimal Route"):
