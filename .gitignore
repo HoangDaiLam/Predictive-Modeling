@@ -1,1 +1,23 @@
-sklearn-env
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment files and credentials (secrets)
+.env
+.env.*
+*.env
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+sklearn-env/
+
+# Scikit-learn (scikit-learn-contrib) specific caches and outputs
+.cache/
+.pytest_cache/
+doc/_build/
+doc/generated/
+*.prof

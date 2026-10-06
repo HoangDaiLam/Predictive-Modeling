@@ -1,0 +1,103 @@
+{
+  "_comment": "File này minh hoạ cấu trúc JSON mẫu (đã rút gọn) trả về từ các API được dùng trong dự án, phục vụ tham khảo/test offline. Không phải dữ liệu thật.",
+
+  "google_routes_api_response_sample": {
+    "routes": [
+      {
+        "distanceMeters": 52340,
+        "duration": "2820s",
+        "polyline": {
+          "encodedPolyline": "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+        },
+        "legs": [
+          {
+            "steps": [
+              {"distanceMeters": 1200, "staticDuration": "90s"},
+              {"distanceMeters": 3400, "staticDuration": "210s"}
+            ]
+          }
+        ]
+      },
+      {
+        "distanceMeters": 61870,
+        "duration": "3120s",
+        "polyline": {
+          "encodedPolyline": "a~l~Fjk~uOwHJy@P"
+        },
+        "legs": [
+          {
+            "steps": [
+              {"distanceMeters": 2100, "staticDuration": "150s"}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+
+  "google_elevation_api_response_sample": {
+    "results": [
+      {
+        "elevation": 15.234,
+        "location": {"lat": 21.0285, "lng": 105.8542},
+        "resolution": 4.771975994110107
+      },
+      {
+        "elevation": 42.891,
+        "location": {"lat": 20.9807, "lng": 105.7396},
+        "resolution": 4.771975994110107
+      },
+      {
+        "elevation": 158.442,
+        "location": {"lat": 20.8133, "lng": 105.3383},
+        "resolution": 9.543951988220215
+      }
+    ],
+    "status": "OK"
+  },
+
+  "openweathermap_current_weather_response_sample": {
+    "coord": {"lon": 105.8542, "lat": 21.0285},
+    "weather": [
+      {"id": 600, "main": "Snow", "description": "tuyết nhẹ", "icon": "13d"}
+    ],
+    "main": {
+      "temp": -8.5,
+      "feels_like": -14.2,
+      "temp_min": -10.1,
+      "temp_max": -6.9,
+      "pressure": 1021,
+      "humidity": 78
+    },
+    "wind": {"speed": 4.6, "deg": 320},
+    "clouds": {"all": 90},
+    "dt": 1735689600,
+    "sys": {"country": "VN", "sunrise": 1735689123, "sunset": 1735730456},
+    "timezone": 25200,
+    "name": "Sample Location",
+    "cod": 200
+  },
+
+  "openweathermap_error_response_sample": {
+    "cod": "401",
+    "message": "Invalid API key. Please see https://openweathermap.org/faq#error401 for more info."
+  },
+
+  "google_api_error_response_sample": {
+    "results": [],
+    "status": "REQUEST_DENIED",
+    "error_message": "The provided API key is invalid."
+  },
+
+  "normalized_route_object_used_internally": {
+    "_comment": "Đây là cấu trúc dữ liệu ĐÃ CHUẨN HOÁ mà route_optimizer.py sử dụng nội bộ sau khi gộp dữ liệu từ các API trên",
+    "route_name": "Tuyến 1: Cao tốc trực tiếp",
+    "distance_km": 52.34,
+    "duration_min": 47.0,
+    "segments": [
+      {"distance_m": 15000, "avg_speed_kmh": 90, "grade_percent": 3.2, "ambient_temp_c": -8.5},
+      {"distance_m": 20000, "avg_speed_kmh": 100, "grade_percent": -1.5, "ambient_temp_c": -9.0},
+      {"distance_m": 17340, "avg_speed_kmh": 80, "grade_percent": 0.5, "ambient_temp_c": -7.8}
+    ]
+  }
+}
