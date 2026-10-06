@@ -116,6 +116,9 @@ class RouteAnalysisResult:
     energy_grade_kwh: float = 0.0
     energy_hvac_kwh: float = 0.0
     energy_btms_kwh: float = 0.0
+    energy_warmup_kwh: float = 0.0
+    energy_preheat_kwh: float = 0.0
+    energy_other_kwh: float = 0.0
 
 
 # ============================================================================
@@ -135,11 +138,13 @@ class RouteOptimizationEngine:
         hvac_sim: Optional[WinterHVACSimulation] = None,
         battery_initial_temp_c: Optional[float] = None,
         time_to_precondition_s: float = 900.0,
+        preheat_plugged_in: bool = False,
     ):
         self.vehicle = vehicle or Polestar4Dynamics()
         self.hvac_sim = hvac_sim or WinterHVACSimulation()
         self.battery_initial_temp_c = battery_initial_temp_c
         self.time_to_precondition_s = time_to_precondition_s
+        self.preheat_plugged_in = preheat_plugged_in
 
     # ------------------------------------------------------------------
     # PHÂN TÍCH MỘT TUYẾN ĐƯỜNG DUY NHẤT
@@ -165,6 +170,16 @@ class RouteOptimizationEngine:
         đầu — vì trong mùa đông, % pin tiêu thụ phải tính trên dung lượng
         THỰC TẾ khai thác được, không phải dung lượng danh định lúc 25°C.
         """
+        # Nhiệt độ pin thực tế: nếu cắm sạc → đã preheat lên target
+        t_batt = (
+            self.hvac_sim.battery_target_temp_c
+            if self.preheat_plugged_in
+            else (
+                self.battery_initial_temp_c
+                if self.battery_initial_temp_c is not None
+                else route.segments[0].ambient_temp_c
+            )
+        )
         driving_energy_list: List[float] = []
         e_aero = 0.0
         e_roll = 0.0
@@ -183,7 +198,7 @@ class RouteOptimizationEngine:
                 avg_speed_mps=seg.avg_speed_mps,
                 grade_angle_rad=seg.grade_angle_rad,
                 air_density=rho,
-                r_mult=1.0,
+                r_mult=self.hvac_sim.compute_internal_resistance_multiplier(t_batt),
             )
 
             # --- (2) Năng lượng hao hụt do HVAC + BTMS trên đoạn này ---
@@ -226,14 +241,18 @@ class RouteOptimizationEngine:
 
         # Preheat pin tính MỘT LẦN cho cả chuyến (không lặp lại mỗi segment)
         # Warm-up cabin: cabin khởi hành = nhiệt độ môi trường (chưa sưởi)
+        # Preheat/warmup — nếu cắm sạc thì lấy từ lưới, KHÔNG tốn pin
         cabin_start = route.segments[0].ambient_temp_c
-        cabin_warmup_kwh = self.hvac_sim.compute_cabin_warmup_energy_kwh(cabin_start)
-        winter_overhead_list.append(cabin_warmup_kwh)
-        if self.battery_initial_temp_c is not None:
-            preheat_kwh = self.hvac_sim.compute_battery_preheat_energy_kwh(
-                self.battery_initial_temp_c
-            )
-            winter_overhead_list.append(preheat_kwh)
+        warmup_kwh = 0.0
+        preheat_kwh = 0.0
+        if not self.preheat_plugged_in:
+            warmup_kwh = self.hvac_sim.compute_cabin_warmup_energy_kwh(cabin_start)
+            if self.battery_initial_temp_c is not None:
+                preheat_kwh = self.hvac_sim.compute_battery_preheat_energy_kwh(
+                    self.battery_initial_temp_c
+                )
+        winter_overhead_list.append(warmup_kwh)
+        winter_overhead_list.append(preheat_kwh)
 
         driving_energy_kwh_total = math.fsum(driving_energy_list)
         winter_overhead_kwh_total = math.fsum(winter_overhead_list)
@@ -242,14 +261,9 @@ class RouteOptimizationEngine:
         ])
 
         # --- Dung lượng pin khả dụng hiệu dụng theo nhiệt độ pin ban đầu ---
-        ref_battery_temp = (
-            self.battery_initial_temp_c
-            if self.battery_initial_temp_c is not None
-            else route.segments[0].ambient_temp_c
-        )
         effective_capacity_kwh = self.hvac_sim.compute_effective_usable_capacity_kwh(
             nominal_usable_capacity_kwh=self.vehicle.battery_usable_capacity_kwh,
-            battery_temp_c=ref_battery_temp,
+            battery_temp_c=t_batt,
         )
 
         battery_percent_consumed = (
@@ -258,6 +272,11 @@ class RouteOptimizationEngine:
 
         distance_km = route.total_distance_km
         avg_consumption = total_energy_kwh / distance_km if distance_km > 0 else 0.0
+
+        # Kiểm tra phân rã = tổng
+        # Phần còn lại = aux load + I²R + hiệu chỉnh regen (không tách riêng)
+        e_other = driving_energy_kwh_total - (e_aero + e_roll + e_grade)
+
 
         return RouteAnalysisResult(
             route_name=route.route_name,
@@ -278,6 +297,9 @@ class RouteOptimizationEngine:
             energy_grade_kwh=round(e_grade, 4),
             energy_hvac_kwh=round(e_hvac, 4),
             energy_btms_kwh=round(e_btms, 4),
+            energy_warmup_kwh=round(warmup_kwh, 4),
+            energy_preheat_kwh=round(preheat_kwh, 4),
+            energy_other_kwh=round(e_other, 4),
         )
 
     def monte_carlo_route(
@@ -320,6 +342,8 @@ class RouteOptimizationEngine:
             eng = RouteOptimizationEngine(
                 vehicle=v, hvac_sim=h,
                 battery_initial_temp_c=self.battery_initial_temp_c,
+                time_to_precondition_s=self.time_to_precondition_s,
+                preheat_plugged_in=self.preheat_plugged_in,
             )
             samples.append(eng.analyze_route(noisy_route).total_energy_kwh)
 
@@ -449,6 +473,9 @@ class RouteOptimizationEngine:
             "energy_grade_kwh": r.energy_grade_kwh,
             "energy_hvac_kwh": r.energy_hvac_kwh,
             "energy_btms_kwh": r.energy_btms_kwh,
+            "energy_warmup_kwh": r.energy_warmup_kwh,
+            "energy_preheat_kwh": r.energy_preheat_kwh,
+            "energy_other_kwh": r.energy_other_kwh,
         }
 
     def _generate_explanation(
@@ -477,10 +504,16 @@ class RouteOptimizationEngine:
             f"COMPARED TO RUNNER-UP '{runner_up.route_name}' "
             f"({runner_up.total_energy_kwh:.2f} kWh):"
         )
-        lines.append(
-            f"   Optimal saves {delta_energy:.2f} kWh "
-            f"({delta_energy/runner_up.total_energy_kwh*100:.1f}%)."
-        )
+        if delta_energy < 0:
+            lines.append(
+                f"   Optimal uses {abs(delta_energy):.2f} kWh MORE "
+                f"but wins on time/feasibility."
+            )
+        else:
+            lines.append(
+                f"   Optimal saves {delta_energy:.2f} kWh "
+                f"({delta_energy/runner_up.total_energy_kwh*100:.1f}%)."
+            )
 
         # Tìm thành phần chênh lệch lớn nhất
         components = {
@@ -489,6 +522,9 @@ class RouteOptimizationEngine:
             "grade (climbing)":   optimal.energy_grade_kwh   - runner_up.energy_grade_kwh,
             "HVAC (cabin heat)":  optimal.energy_hvac_kwh    - runner_up.energy_hvac_kwh,
             "BTMS (battery heat)":optimal.energy_btms_kwh    - runner_up.energy_btms_kwh,
+            "Cabin warm-up":       optimal.energy_warmup_kwh  - runner_up.energy_warmup_kwh,
+            "Battery preheat":     optimal.energy_preheat_kwh - runner_up.energy_preheat_kwh,
+            "Aux/losses":          optimal.energy_other_kwh   - runner_up.energy_other_kwh,
         }
         # Thành phần làm cho tuyến tối ưu RẺ HƠN (âm) là lợi thế chính
         advantages = {k: v for k, v in components.items() if v < -1e-6}
@@ -519,69 +555,102 @@ class RouteOptimizationEngine:
 # ============================================================================
 # HÀM TIỆN ÍCH: XÂY DỰNG RouteCandidate TỪ DỮ LIỆU API THẬT
 # ============================================================================
-def build_route_candidate_from_api(
-    route_name: str,
-    description: str,
+def build_route_candidates_from_api(
     origin: tuple,
     destination: tuple,
     api_config: APIConfig,
     use_mock_on_failure: bool = True,
-) -> RouteCandidate:
+    samples_per_route: int = 60,
+) -> List[RouteCandidate]:
     """
-    Xây dựng RouteCandidate từ Google Routes API (đường thật, không phải
-    đường thẳng), kèm Elevation + Weather trên polyline thực tế.
+    Trả về DANH SÁCH RouteCandidate — một cho mỗi alternative route từ
+    Google Routes API. Nhiệt độ lấy theo vị trí (đầu/giữa/cuối) thay vì 1 avg.
     Fallback mock nếu API lỗi.
     """
     origin_lat, origin_lng = origin
     dest_lat, dest_lng = destination
 
     try:
-        # 1. Routes API → alternatives + polyline thật
-        alts = fetch_route_alternatives(origin_lat, origin_lng, dest_lat, dest_lng, api_config)
-        primary = alts[0]
-        polyline = decode_polyline(primary["encoded_polyline"])
-        total_distance_m = primary["distance_m"]
-        total_duration_s = primary["duration_s"]
-        avg_speed_kmh = (total_distance_m / total_duration_s * 3.6) if total_duration_s > 0 else 80.0
-
-        # 2. Elevation dọc theo polyline thật
-        elevation_profile = fetch_elevation_profile(polyline, api_config, samples=100)
-
-        # 3. Nhiệt độ tại 3 điểm (đầu, giữa, cuối)
-        mid = polyline[len(polyline) // 2]
-        sampled = [(origin_lat, origin_lng), mid, (dest_lat, dest_lng)]
-        temp_data = fetch_temperature_profile_along_route(sampled, api_config)
-        avg_temp_c = math.fsum(t["temperature_c"] for t in temp_data) / len(temp_data)
-
+        alts = fetch_route_alternatives(
+            origin_lat, origin_lng, dest_lat, dest_lng, api_config
+        )
     except APIIntegrationError as e:
         if not use_mock_on_failure:
             raise
-        print(f"[WARN] API failed ({e}). Using MOCK data.")
+        print(f"[WARN] Routes API failed ({e}). Using MOCK data.")
         elevation_profile = generate_mock_elevation_profile(
             origin_lat, origin_lng, dest_lat, dest_lng, num_points=20
         )
-        avg_temp_c = -8.0
-        avg_speed_kmh = 80.0
+        segments = _profile_to_segments(elevation_profile, 80.0, [-8.0])
+        return [RouteCandidate("Route 1 (MOCK)", segments, "Fallback route")]
 
-    # Chuyển elevation profile → RouteSegment
+    candidates: List[RouteCandidate] = []
+    for idx, alt in enumerate(alts):
+        polyline = decode_polyline(alt["encoded_polyline"])
+        total_distance_m = alt["distance_m"]
+        total_duration_s = alt["duration_s"]
+        avg_speed_kmh = (
+            total_distance_m / total_duration_s * 3.6
+            if total_duration_s > 0 else 80.0
+        )
+
+        try:
+            elevation_profile = fetch_elevation_profile(
+                polyline, api_config, samples=samples_per_route
+            )
+            n = len(polyline) - 1
+            sampled = [polyline[int(f * n)] for f in (0.0, 0.25, 0.5, 0.75, 1.0)]
+            temp_data = fetch_temperature_profile_along_route(sampled, api_config)
+            temps = [t["temperature_c"] for t in temp_data]
+        except APIIntegrationError as e:
+            if not use_mock_on_failure:
+                raise
+            print(f"[WARN] Elevation/Weather failed for route {idx} ({e}). Mocking.")
+            elevation_profile = generate_mock_elevation_profile(
+                origin_lat, origin_lng, dest_lat, dest_lng, num_points=20
+            )
+            temps = [-8.0]
+
+        segments = _profile_to_segments(elevation_profile, avg_speed_kmh, temps)
+        candidates.append(RouteCandidate(
+            route_name=f"Route {idx + 1} (REAL API)",
+            description=f"Alternative {idx + 1}: {total_distance_m/1000:.1f} km, {total_duration_s/60:.0f} min",
+            segments=segments,
+        ))
+
+    return candidates
+
+def _interp_temp(temps: List[float], f: float) -> float:
+    """Nội suy tuyến tính nhiệt độ theo phân số vị trí f ∈ [0, 1]."""
+    if len(temps) == 1:
+        return temps[0]
+    x = f * (len(temps) - 1)
+    k = min(int(x), len(temps) - 2)
+    return temps[k] + (temps[k + 1] - temps[k]) * (x - k)
+
+
+def _profile_to_segments(
+    elevation_profile: List[Dict[str, float]],
+    avg_speed_kmh: float,
+    temps: List[float],
+) -> List[RouteSegment]:
+    """Chuyển elevation profile → RouteSegment list, nhiệt độ nội suy theo vị trí."""
+    from api_integration import _haversine_distance_m
     segments: List[RouteSegment] = []
+    n_seg = max(len(elevation_profile) - 2, 1)
     for i in range(len(elevation_profile) - 1):
         p1 = elevation_profile[i]
         p2 = elevation_profile[i + 1]
-        from api_integration import _haversine_distance_m
         dist_m = _haversine_distance_m(p1["lat"], p1["lng"], p2["lat"], p2["lng"])
         if dist_m < 1.0:
             continue
-        # p1["grade_percent"] đã là độ dốc đoạn p1→p2 (theo code API hiện tại)
         segments.append(RouteSegment(
             distance_m=dist_m,
             avg_speed_kmh=avg_speed_kmh,
             grade_percent=p1.get("grade_percent", 0.0),
-            ambient_temp_c=avg_temp_c,
+            ambient_temp_c=_interp_temp(temps, i / n_seg),
         ))
-
-    return RouteCandidate(route_name=route_name, description=description, segments=segments)
-
+    return segments
 
 # ============================================================================
 # KHỐI TỰ KIỂM TRA — VÍ DỤ SO SÁNH 2 TUYẾN ĐƯỜNG (dữ liệu thủ công)

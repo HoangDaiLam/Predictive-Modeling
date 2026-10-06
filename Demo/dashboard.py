@@ -62,6 +62,7 @@ Cách Dashboard giao tiếp với AI Engine backend:
 ================================================================================
 """
 
+import math
 import dataclasses
 import streamlit as st
 import pandas as pd
@@ -147,6 +148,7 @@ engine = RouteOptimizationEngine(
     vehicle=vehicle,
     hvac_sim=hvac_sim,
     battery_initial_temp_c=battery_initial_temp_c,
+    preheat_plugged_in=preheat_on,
 )
 
 # ============================================================================
@@ -200,6 +202,13 @@ st.divider()
 # ============================================================================
 st.header("Route Comparison & Optimization")
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_routes_cached(o_lat, o_lng, d_lat, d_lng):
+    from route_optimizer import build_route_candidates_from_api
+    return build_route_candidates_from_api(
+        (o_lat, o_lng), (d_lat, d_lng), APIConfig(), use_mock_on_failure=False
+    )
+
 if run_button:
     with st.spinner("Retrieving terrain and weather data and performing energy consumption calculations…"):
 
@@ -209,15 +218,15 @@ if run_button:
         if use_real_api:
             # ---- Cố gắng dùng API thật ----
             try:
-                from route_optimizer import build_route_candidate_from_api
-                route1 = build_route_candidate_from_api(
-                    "ROUTE 1 (REAL API)", "Direct route computed via Google Routes API",
-                    (origin_lat, origin_lng), (dest_lat, dest_lng), api_config,
+                routes = fetch_routes_cached(origin_lat, origin_lng, dest_lat, dest_lng)
+                st.success(f"Retrieved {len(routes)} alternative routes from the API.")
+                _t = [s.ambient_temp_c for r in routes for s in r.segments]
+                st.info(
+                    f"Live temperature along routes: {min(_t):.1f} to {max(_t):.1f} °C "
+                    f"(the temperature slider only affects the battery and the panel above)"
                 )
-                routes.append(route1)
-                st.success("Successfully retrieved data from the Google Maps and OpenWeatherMap APIs.")
             except APIIntegrationError as e:
-                st.warning(f"Failed to retrieve data from the live API ({e}). Falling back to the simulated dataset.")
+                st.warning(f"Live API failed ({e}). Falling back to mock data.")
                 use_real_api = False
 
         if not use_real_api:
@@ -230,27 +239,54 @@ if run_button:
             )
 
             def profile_to_segments(profile, avg_speed_kmh, distance_scale_km, temp_c):
+                """Sinh segment KHỚP khoảng cách — độ dốc & khoảng cách nhất quán."""
+                from api_integration import _haversine_distance_m
+                # Tổng khoảng cách thật từ haversine
+                real_total_m = math.fsum(
+                    _haversine_distance_m(
+                        profile[i]["lat"], profile[i]["lng"],
+                        profile[i+1]["lat"], profile[i+1]["lng"],
+                    )
+                    for i in range(len(profile) - 1)
+                )
+                if real_total_m < 1.0:
+                    return []
+                # Scale = tỉ lệ giữa khoảng cách user muốn và khoảng cách thật
+                scale = (distance_scale_km * 1000.0) / real_total_m
+
                 segs = []
-                n = len(profile) - 1
-                seg_dist_m = (distance_scale_km * 1000.0) / max(n, 1)
-                for i in range(n):
+                for i in range(len(profile) - 1):
+                    real_seg_m = _haversine_distance_m(
+                        profile[i]["lat"], profile[i]["lng"],
+                        profile[i+1]["lat"], profile[i+1]["lng"],
+                    )
+                    if real_seg_m < 1.0:
+                        continue
+                    # Độ cao leo phải scale CÙNG tỉ lệ → grade giữ nguyên
                     segs.append(RouteSegment(
-                        distance_m=seg_dist_m,
+                        distance_m=real_seg_m * scale,
                         avg_speed_kmh=avg_speed_kmh,
                         grade_percent=profile[i].get("grade_percent", 0.0),
                         ambient_temp_c=temp_c,
                     ))
                 return segs
 
+            from api_integration import _haversine_distance_m
+            straight_km = _haversine_distance_m(
+                origin_lat, origin_lng, dest_lat, dest_lng
+            ) / 1000.0
+            direct_km = straight_km * 1.15   # đường tắt qua đèo
+            flat_km = straight_km * 1.40     # đường vòng tránh đèo
+
             route_direct = RouteCandidate(
                 route_name="Route 1: Direct Mountain",
                 description="Shorter route with several steep inclines",
-                segments=profile_to_segments(mock_profile_direct, 70, 45.0, ambient_temp_c),
+                segments=profile_to_segments(mock_profile_direct, 70, direct_km, ambient_temp_c),
             )
             route_flat = RouteCandidate(
                 route_name="Route 2: Flat Loop",
                 description="The route is longer, but it's almost completely flat.",
-                segments=profile_to_segments(mock_profile_flat, 90, 54.0, ambient_temp_c),
+                segments=profile_to_segments(mock_profile_flat, 90, flat_km, ambient_temp_c),
             )
             routes = [route_direct, route_flat]
 
@@ -298,6 +334,10 @@ if "last_result" in st.session_state:
             "Total Energy (kWh)": r["total_energy_kwh"],
             "Battery Percent Consumed": r["battery_percent_consumed"],
             "Max Grade (%)": r["max_grade_percent"],
+            "Elevation gain (m)": r["total_elevation_gain_m"],
+            "Avg speed (km/h)": round(
+                r["distance_km"] / (r["duration_min"] / 60), 1
+            ) if r["duration_min"] else 0,
         })
 
     df_compare = pd.DataFrame(comparison_rows)
@@ -308,14 +348,14 @@ if "last_result" in st.session_state:
     )
 
     # ---- Biểu đồ so sánh trực quan ----
-    chart_df = pd.DataFrame([
-        {
-            "Route": r["route_name"],
-            "Driving Energy": r["driving_energy_kwh"],
-            "Winter Overhead (HVAC+BTMS)": r["winter_overhead_kwh"],
-        }
-        for r in result["all_results"]
-    ]).set_index("Route")
+    # chart_df = pd.DataFrame([
+    #     {
+    #         "Route": r["route_name"],
+    #         "Driving Energy": r["driving_energy_kwh"],
+    #         "Winter Overhead (HVAC+BTMS)": r["winter_overhead_kwh"],
+    #     }
+    #     for r in result["all_results"]
+    # ]).set_index("Route")
     component_df = pd.DataFrame([
         {
             "Route": r["route_name"],
@@ -324,6 +364,9 @@ if "last_result" in st.session_state:
             "Grade":    r["energy_grade_kwh"],
             "HVAC":     r["energy_hvac_kwh"],
             "BTMS":     r["energy_btms_kwh"],
+            "Warmup":   r["energy_warmup_kwh"],
+            "Preheat":  r["energy_preheat_kwh"],
+            "Aux/losses": r["energy_other_kwh"],
         }
         for r in result["all_results"]
     ]).set_index("Route")
@@ -341,6 +384,7 @@ if "last_result" in st.session_state:
             eng_t = RouteOptimizationEngine(
                 vehicle=vehicle, hvac_sim=hvac_sim,
                 battery_initial_temp_c=float(t),
+                preheat_plugged_in=preheat_on,
             )
             rs = [
                 RouteCandidate(
@@ -374,18 +418,35 @@ if "last_result" in st.session_state:
             st.line_chart(sc_df)
 
         if st.button("Run Monte Carlo (300 samples)"):
+            import random as _rnd
+            _seed = 42
+            _rnd.seed(_seed)
+            opt_route = next(
+                (r for r in st.session_state["routes"]
+                 if r.route_name == opt["route_name"]),
+                st.session_state["routes"][0],
+            )
             with st.spinner("Sampling..."):
-                mc = engine.monte_carlo_route(st.session_state["routes"][0], n_samples=300)
+                mc = engine.monte_carlo_route(opt_route, n_samples=300)
+            arrival_p90 = (
+                soc_start_pct - mc["p90"] / opt["effective_usable_capacity_kwh"] * 100
+            )
             st.markdown(
-                f"**Monte Carlo for '{st.session_state['routes'][0].route_name}'**  \n"
+                f"**Monte Carlo for '{opt_route.route_name}'**  \n"
                 f"P10 = {mc['p10']:.2f} kWh | "
                 f"P50 = {mc['p50']:.2f} kWh | "
                 f"P90 = {mc['p90']:.2f} kWh | "
                 f"mean = {mc['mean']:.2f} kWh"
             )
             st.info(
-                f"Plan for **P90 = {mc['p90']:.2f} kWh** to have 90% confidence."
+                f"Plan for **P90 = {mc['p90']:.2f} kWh** "
+                f"(arrival SoC = {arrival_p90:.1f}%)."
             )
+            if arrival_p90 < reserve_pct:
+                st.error(
+                    f"Even at P90, arrival SoC ({arrival_p90:.1f}%) "
+                    f"is below reserve ({reserve_pct:.1f}%)."
+                )
 
     # ---- Chi tiết từng đoạn của tuyến tối ưu ----
     with st.expander("Detailed Breakdown of Segments in the Optimal Route"):
