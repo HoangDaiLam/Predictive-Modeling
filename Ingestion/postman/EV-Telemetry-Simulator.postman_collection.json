@@ -1,0 +1,2801 @@
+{
+  "info": {
+    "name": "EV Telemetry Simulator",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman acting as a simulated vehicle. Run '00 Init' first, then the folders in order (or use the Collection Runner)."
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('t0')) {",
+          "  pm.collectionVariables.set('run_id', Math.random().toString(16).slice(2, 8));",
+          "  pm.collectionVariables.set('t0', new Date(Date.now() - 10*60*1000).toISOString());",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "validation_phase",
+      "value": "4"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Init new run + health check",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('run_id', Math.random().toString(16).slice(2, 8));",
+              "pm.collectionVariables.set('t0', new Date(Date.now() - 10*60*1000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('API is up', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Run first. Generates a fresh run_id (so vehicle IDs are new) and t0 (the simulated trip start, 10 min ago)."
+      }
+    },
+    {
+      "name": "01 Valid telemetry",
+      "item": [
+        {
+          "name": "01a Valid, full payload",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-valid\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "All contract fields present."
+          }
+        },
+        {
+          "name": "01b Valid, required fields only",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-min\",\n  \"source\": \"simulator\",\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"speed_kmh\": 52.4,\n  \"soc_pct\": 78.5,\n  \"battery_temp_c\": 24.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Optional fields omitted (no V/I, no HVAC). Must still be accepted; completeness is tracked, not enforced."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Missing fields / bad JSON",
+      "item": [
+        {
+          "name": "02a Missing soc_pct",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field soc_pct', () => pm.expect(body.errors.map(e => e.field)).to.include('soc_pct'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-miss\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "02b Missing timestamp",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field timestamp', () => pm.expect(body.errors.map(e => e.field)).to.include('timestamp'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-miss\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "02c Empty object {}",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Every required field is reported."
+          }
+        },
+        {
+          "name": "02d Malformed JSON syntax",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field (body)', () => pm.expect(body.errors.map(e => e.field)).to.include('(body)'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_id\": \"SIM-1\", \"speed_kmh\": 50,",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Not parseable at all. Raw text is preserved in the log."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Wrong data types",
+      "item": [
+        {
+          "name": "03a speed_kmh = \"fast\"",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field speed_kmh', () => pm.expect(body.errors.map(e => e.field)).to.include('speed_kmh'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-type\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": \"fast\",\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "03b speed_kmh = \"50\" (number as string)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field speed_kmh', () => pm.expect(body.errors.map(e => e.field)).to.include('speed_kmh'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-type\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": \"50\",\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Strict typing: a string is never silently converted."
+          }
+        },
+        {
+          "name": "03c hvac_on = \"yes\"",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 2*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field hvac_on', () => pm.expect(body.errors.map(e => e.field)).to.include('hvac_on'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-type\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": \"yes\",\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "03d latitude = null",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 3*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field latitude', () => pm.expect(body.errors.map(e => e.field)).to.include('latitude'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-type\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": null,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "03e source = \"tesla_api\" (unknown enum)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 4*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field source', () => pm.expect(body.errors.map(e => e.field)).to.include('source'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-type\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"tesla_api\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Impossible GPS",
+      "item": [
+        {
+          "name": "04a latitude = 95",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field latitude', () => pm.expect(body.errors.map(e => e.field)).to.include('latitude'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gps\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 95.0,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Phase 4: accepted (types are fine). Phase 5: hard range violation, 422."
+          }
+        },
+        {
+          "name": "04b longitude = 200",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field longitude', () => pm.expect(body.errors.map(e => e.field)).to.include('longitude'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gps\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 200.0,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "04c (0, 0) 'Null Island'",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 2*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag gps_null_island', () => pm.expect(body.quality_flags || []).to.include('gps_null_island'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gps\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 0.0,\n  \"longitude\": 0.0,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Technically valid coordinates, but the classic 'no GPS fix' value. Phase 5: accepted and FLAGGED."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 SoC out of range",
+      "item": [
+        {
+          "name": "05a soc_pct = -5",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field soc_pct', () => pm.expect(body.errors.map(e => e.field)).to.include('soc_pct'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-soc\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": -5.0,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "05b soc_pct = 120",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field soc_pct', () => pm.expect(body.errors.map(e => e.field)).to.include('soc_pct'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-soc\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 120.0,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "05c soc_pct = 100 (boundary)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 2*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-soc\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 100.0,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Boundary values are valid."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Speed",
+      "item": [
+        {
+          "name": "06a speed_kmh = -10",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field speed_kmh', () => pm.expect(body.errors.map(e => e.field)).to.include('speed_kmh'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-speed\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": -10.0,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Contract: speed is magnitude, always >= 0. Reverse driving needs a separate field."
+          }
+        },
+        {
+          "name": "06b speed_kmh = 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field speed_kmh', () => pm.expect(body.errors.map(e => e.field)).to.include('speed_kmh'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-speed\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 400.0,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Beyond any road EV. The hard limit will be set generously; calibrate per vehicle."
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 Impossible battery values",
+      "item": [
+        {
+          "name": "07a battery_voltage_v = -50",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field battery_voltage_v', () => pm.expect(body.errors.map(e => e.field)).to.include('battery_voltage_v'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-batt\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": -50.0,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "07b battery_current_a = 99999",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field battery_current_a', () => pm.expect(body.errors.map(e => e.field)).to.include('battery_current_a'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-batt\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 99999.0,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "07c battery_temp_c = 500",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 2*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field battery_temp_c', () => pm.expect(body.errors.map(e => e.field)).to.include('battery_temp_c'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-batt\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 500.0,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "07d power inconsistent with V x I",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 3*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag power_inconsistent', () => pm.expect(body.quality_flags || []).to.include('power_inconsistent'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-batt\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": -80.0,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "V=392.1, I=45.3 implies about +17.8 kW, but -80 kW is reported. Each value is individually legal, so Phase 5 accepts and FLAGS it (we cannot know which value is wrong)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 Invalid timestamps",
+      "item": [
+        {
+          "name": "08a timestamp = \"yesterday\"",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field timestamp', () => pm.expect(body.errors.map(e => e.field)).to.include('timestamp'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ts\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"yesterday\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "08b timestamp without timezone",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field timestamp', () => pm.expect(body.errors.map(e => e.field)).to.include('timestamp'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ts\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"2026-10-05T08:15:30\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "08c timestamp = unix integer",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 422;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field timestamp', () => pm.expect(body.errors.map(e => e.field)).to.include('timestamp'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ts\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": 1759652130,\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "08d timestamp 2 days in the future",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(Date.now()+2*86400000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field timestamp', () => pm.expect(body.errors.map(e => e.field)).to.include('timestamp'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ts\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Phase 5: rejected if later than now + 5 min (clock errors)."
+          }
+        },
+        {
+          "name": "08e timestamp = 1970-01-01",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 422 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 422) pm.test('error names field timestamp', () => pm.expect(body.errors.map(e => e.field)).to.include('timestamp'));",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ts\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"1970-01-01T00:00:00Z\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Classic 'device clock never set' value."
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 Duplicate records (run in order)",
+      "item": [
+        {
+          "name": "09a First delivery",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 5*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-dup\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 7,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "09b Identical resend",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 5*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 409 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-dup\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 7,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Same vehicle + source + timestamp. Phase 4: stored a 2nd time (the problem). Phase 5/6: 409 Conflict."
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 Out-of-order records (run in order)",
+      "item": [
+        {
+          "name": "10a t+0 s, seq 1",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ooo\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "10b t+30 s, seq 2",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 30*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ooo\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 2,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "10c t+15 s, seq 3 (late arrival)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 15*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag out_of_order', () => pm.expect(body.quality_flags || []).to.include('out_of_order'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-ooo\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 3,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Older than the latest stored record. Buffered loggers do this legitimately, so Phase 5 accepts and FLAGS it."
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 Missing intervals / sampling rate (run in order)",
+      "item": [
+        {
+          "name": "11a t+0 s",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gap\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "11b t+1 s",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gap\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 2,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "11c t+2 s",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 2*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gap\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 3,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "11d t+62 s (60 s gap at 1 Hz)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 62*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag gap_detected', () => pm.expect(body.quality_flags || []).to.include('gap_detected'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gap\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 4,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Sequence numbers also jump if the sender skips; here only time does."
+          }
+        },
+        {
+          "name": "11e t+62.01 s (10 ms later)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime()+62010).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag sampling_too_fast', () => pm.expect(body.quality_flags || []).to.include('sampling_too_fast'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gap\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 5,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Faster than the source's declared rate: duplicate-ish or clock problem."
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 Sudden physically suspicious changes (run in order)",
+      "item": [
+        {
+          "name": "12a SoC baseline 78.5 %",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-soc-jump\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "12b SoC 52 % one second later",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag soc_jump', () => pm.expect(body.quality_flags || []).to.include('soc_jump'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-soc-jump\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 2,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 52.0,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "26 % in 1 s is impossible. Legal individually, so FLAGGED (SoC can also be re-calibrated by the BMS)."
+          }
+        },
+        {
+          "name": "12c Speed baseline 50 km/h",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-spd-jump\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 50.0,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "12d Speed 180 km/h one second later",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag speed_jump', () => pm.expect(body.quality_flags || []).to.include('speed_jump'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-spd-jump\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 2,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 180.0,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "Implied acceleration about 36 m/s^2. Thresholds must be calibrated per vehicle."
+          }
+        },
+        {
+          "name": "12e GPS baseline (Helsinki)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 0*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gps-jump\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 1,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 60.1699,\n  \"longitude\": 24.9384,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "12f GPS ~160 km away one second later",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('ts', new Date(new Date(pm.collectionVariables.get('t0')).getTime() + 1*1000).toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const phase = parseInt(pm.variables.get('validation_phase') || '4');",
+                  "const expected = phase >= 5 ? 201 : 201;",
+                  "const body = (() => { try { return pm.response.json(); } catch (e) { return {}; } })();",
+                  "pm.test(`HTTP ${expected} expected (validation phase ${phase})`, () => pm.response.to.have.status(expected));",
+                  "if (expected === 201) pm.test('body.status is accepted', () => pm.expect(body.status).to.eql('accepted'));",
+                  "if (expected === 422) pm.test('rejected, errors listed', () => {",
+                  "  pm.expect(body.status).to.eql('rejected'); pm.expect(body.errors).to.be.an('array').that.is.not.empty; });",
+                  "if (expected === 409) pm.test('body.status is duplicate', () => pm.expect(body.status).to.eql('duplicate'));",
+                  "if (phase >= 5) pm.test('quality flag gps_jump', () => pm.expect(body.quality_flags || []).to.include('gps_jump'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_version\": \"1.0\",\n  \"vehicle_id\": \"SIM-{{run_id}}-gps-jump\",\n  \"trip_id\": \"trip-{{run_id}}\",\n  \"source\": \"simulator\",\n  \"sequence_number\": 2,\n  \"timestamp\": \"{{ts}}\",\n  \"latitude\": 61.4978,\n  \"longitude\": 23.761,\n  \"altitude_m\": 12.5,\n  \"heading_deg\": 87.0,\n  \"speed_kmh\": 52.4,\n  \"acceleration_mps2\": 0.4,\n  \"soc_pct\": 78.5,\n  \"battery_voltage_v\": 392.1,\n  \"battery_current_a\": 45.3,\n  \"battery_power_kw\": 17.76,\n  \"battery_temp_c\": 24.5,\n  \"charging_state\": \"driving\",\n  \"hvac_on\": true,\n  \"hvac_power_w\": 1200,\n  \"ambient_temp_c\": 3.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/telemetry",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "telemetry"
+              ]
+            },
+            "description": "About 160 km in 1 s. Typical GPS glitch or a mixed-up vehicle_id."
+          }
+        }
+      ]
+    }
+  ]
+}
