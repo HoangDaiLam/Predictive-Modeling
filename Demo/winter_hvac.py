@@ -152,23 +152,12 @@ class WinterHVACSimulation:
         }
 
     def compute_cabin_hvac_electric_power_kw(self, ambient_temp_c: float, cabin_temp_c: Optional[float] = None) -> Dict[str, float]:
-        """
-        Tính CÔNG SUẤT ĐIỆN (kW) mà hệ thống HVAC cần rút từ pin để bù đắp
-        nhiệt lượng thất thoát, có xét đến hiệu suất bơm nhiệt (COP):
-
-            P_electric_heat_pump = Q_heat_loss / COP(T_ambient)
-
-        Nếu nhu cầu nhiệt vượt quá công suất tối đa của bơm nhiệt
-        (heat_pump_max_power_kw), phần còn thiếu được bù bởi sưởi điện trở
-        PTC phụ trợ (hiệu suất PTC xấp xỉ 1.0, tức COP=1, vì chuyển hoá điện
-        trực tiếp thành nhiệt):
-
-            Q_shortfall = Q_heat_loss - Q_heat_pump_max
-            P_ptc = Q_shortfall / 1.0   (nếu Q_shortfall > 0)
-
-        Tổng công suất điện tiêu thụ cho cabin:
-            P_hvac_total = P_electric_heat_pump + P_ptc
-        """
+        # ALGORITHM: Cabin HVAC electric power
+        # FORMULA:
+        #   Q_loss = U·A·ΔT + ṁ_air·cp_air·ΔT − 100·N_occupants
+        #   COP(T) = linear interpolation between (0°C, 3.0) and (−10°C, 1.8)
+        #   If Q_loss ≤ heat_pump_max: P = Q_loss / COP
+        #   Otherwise: P = heat_pump_max/COP + (Q_loss − heat_pump_max)/1.0
         heat_loss = self.compute_cabin_heat_loss_w(ambient_temp_c, cabin_temp_c)
         q_total_w = heat_loss["q_total_heat_loss_w"]
 
@@ -206,30 +195,13 @@ class WinterHVACSimulation:
         current_battery_temp_c: Optional[float] = None,
         time_to_target_s: float = 900.0,
     ) -> Dict[str, float]:
-        """
-        Tính công suất điện (kW) cần thiết để BTMS làm ấm pin lên nhiệt độ
-        vận hành tối ưu (battery_target_temp_c), theo mô hình nhiệt dung
-        tập trung (lumped capacitance model):
-
-        (1) Nhiệt lượng cần cấp để NÂNG NHIỆT ĐỘ pin (sensible heating):
-                Q_raise = m_battery * c_p_battery * (T_target - T_current)
-            (chỉ tính nếu T_current < T_target; nếu pin đã đủ ấm, Q_raise = 0)
-
-            Công suất trung bình cần thiết để đạt mục tiêu trong thời gian
-            time_to_target_s:
-                P_raise = Q_raise / time_to_target_s
-
-        (2) Nhiệt lượng cần bù đắp TỔN THẤT LIÊN TỤC ra môi trường trong lúc
-            duy trì nhiệt độ (steady-state holding loss), qua lớp cách nhiệt
-            pack pin:
-                Q_hold_loss = k_insulation * (T_target - T_ambient)
-            k_insulation: hệ số tổn thất nhiệt của pack (W/K), pack pin có
-            vỏ cách nhiệt + có thể đặt trong khoang gầm hở ra khí lạnh.
-
-        Tổng công suất điện BTMS (giả định heater hiệu suất ~95%, một phần nhỏ
-        tổn hao qua dây dẫn/điều khiển):
-                P_btms_total = (P_raise + Q_hold_loss) / eta_heater
-        """
+        # ALGORITHM: BTMS heating power (lumped capacitance)
+        # RECIPE:
+        # Q_raise = m_pack · cp_pack · (T_target − T_start) [J]
+        # P_raise = Q_raise / time_to_target_s [W]
+        # Q_hold = k_insulation · (T_target − T_ambient) [W]
+        # P_total = (P_raise + Q_hold) / η_heater
+        # P_total = min(P_total, btms_heater_max_power_kw × 1000)
         if current_battery_temp_c is None:
             # Giả định mặc định: nhiệt độ pin xấp xỉ nhiệt độ môi trường khi
             # xe đỗ qua đêm ngoài trời lạnh (cold-soaked battery)
@@ -276,24 +248,20 @@ class WinterHVACSimulation:
         return fp[-1]
 
     def compute_capacity_fade_factor(self, battery_temp_c: float) -> float:
-        """
-        Trả về hệ số dung lượng hiệu dụng (0.0 - 1.0) của pin tại nhiệt độ
-        cho trước, nội suy từ bảng thực nghiệm capacity_fade_lookup_temp_c /
-        capacity_fade_factor.
+        # ALGORITHM: Lookup table + linear interpolation
+        # TABLE: T = (−20, −10, 0, 10, 20, 25) → factor = (0.68, 0.78, 0.88, 0.95, 0.99, 1.00)
+        # FORMULA: factor(T) = fp[i] + (T − xp[i])/(xp[i+1] − xp[i]) × (fp[i+1] − fp[i])
+        # CLAMP: T ≤ −20 → 0.68; T ≥ 25 → 1.00
 
-        Ý nghĩa vật lý: ở nhiệt độ thấp, tốc độ khuếch tán ion Li+ trong chất
-        điện giải và điện cực chậm lại, làm giảm dung lượng KHẢ DỤNG tức thời
-        (không phải suy giảm vĩnh viễn - capacity hồi phục khi pin ấm lên).
-        """
         return self._linear_interp(
             battery_temp_c, self.capacity_fade_lookup_temp_c, self.capacity_fade_factor
         )
 
     def compute_internal_resistance_multiplier(self, battery_temp_c: float) -> float:
-        """
-        Trả về hệ số nhân nội trở tại nhiệt độ pin cho trước, dùng để ước
-        tính thêm tổn hao I^2*R khi pin hoạt động (sạc/xả) ở nhiệt độ thấp.
-        """
+        # ALGORITHM: Lookup table + linear interpolation
+        # TABLE: T = (−20, −10, 0, 10, 20, 25) → r_mult = (2.6, 1.9, 1.35, 1.1, 1.0, 1.0)
+        # Used to scale I²R loss and limit regen when the battery is cold.
+
         return self._linear_interp(
             battery_temp_c,
             self.capacity_fade_lookup_temp_c,
@@ -301,10 +269,9 @@ class WinterHVACSimulation:
         )
 
     def compute_effective_usable_capacity_kwh(self, nominal_usable_capacity_kwh: float, battery_temp_c: float) -> float:
-        """
-        Dung lượng khả dụng hiệu dụng trong điều kiện lạnh:
-            C_effective = C_nominal * capacity_fade_factor(T_battery)
-        """
+        # ALGORITHM: Effective capacity at cold temperature
+        # FORMULA: C_effective = C_nominal × capacity_fade_factor(T_battery)
+
         factor = self.compute_capacity_fade_factor(battery_temp_c)
         return nominal_usable_capacity_kwh * factor
 
@@ -348,17 +315,14 @@ class WinterHVACSimulation:
         initial_battery_temp_c: Optional[float] = None,
         time_to_target_s: float = 900.0,
     ) -> Dict[str, float]:
-        """
-        Tổng hợp toàn bộ hao hụt điện năng (kWh) do hệ thống HVAC cabin + BTMS
-        pin trong suốt một chuyến đi, dựa trên thời lượng chuyến đi.
-
-        Giả định đơn giản hoá hợp lý: công suất HVAC & BTMS gần như không đổi
-        trong suốt chuyến đi ngắn/trung bình (vì nhiệt độ môi trường & mục
-        tiêu cabin/pin không đổi) => Energy = Power * time.
-
-        (Với chuyến đi rất dài qua nhiều vùng khí hậu khác nhau, nên chia nhỏ
-        theo từng đoạn và gọi lại hàm này cho từng đoạn — xem route_optimizer.py.)
-        """
+        # ALGORITHM: Winter overhead per segment
+        # RECIPE:
+        # P_HVAC = compute_cabin_hvac_electric_power_kw(T)
+        # P_BTMS = compute_battery_heating_power_kw(T, T_batt)
+        # E_HVAC = P_HVAC × (trip_duration_s / 3600)
+        # E_BTMS = P_BTMS × (trip_duration_s / 3600)
+        # E_total = E_HVAC + E_BTMS
+        
         hvac_result = self.compute_cabin_hvac_electric_power_kw(ambient_temp_c)
         btms_result = self.compute_battery_heating_power_kw(
             ambient_temp_c, initial_battery_temp_c, time_to_target_s

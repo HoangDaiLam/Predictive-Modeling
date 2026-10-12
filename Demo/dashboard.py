@@ -93,6 +93,8 @@ st.caption(
 # SIDEBAR: CẤU HÌNH XE & MÔI TRƯỜNG
 # ============================================================================
 with st.sidebar:
+    # Origin:        (lat) 21.0285   (lng) 105.8542
+    # Destination:   (lat) 20.8133   (lng) 105.3383
     st.header("This Trip's Number")
 
     st.subheader("Origin")
@@ -105,6 +107,9 @@ with st.sidebar:
 
     st.divider()
 
+    # Weather Condition
+    # Temperature (°C):                            [-10.00]   (slider −25 → +5)
+    # Battery Start Temperature (°C, cold-soaked): [-10.00]   (slider −25 → +20)
     st.subheader("Weaether Condition")
     ambient_temp_c = st.slider(
         "Temperature (°C)", min_value=-25.0, max_value=5.0, value=-10.0, step=0.5
@@ -116,6 +121,12 @@ with st.sidebar:
 
     st.divider()
 
+    # Battery & Optimization
+    # Current SoC (%):    [80.00]
+    # Reserve SoC (%):    [10.00]
+    # Weight: energy:     [1.00]
+    # Weight: time:       [0.00]
+    # ☐ Preheat while plugged in
     st.subheader("Battery & Optimization")
     soc_start_pct = st.slider("Current SoC (%)", 5.0, 100.0, 80.0, 1.0)
     reserve_pct = st.slider("Reserve SoC (%)", 0.0, 30.0, 10.0, 1.0)
@@ -154,11 +165,13 @@ engine = RouteOptimizationEngine(
 # ============================================================================
 st.header("HVAC & BTMS (Real-time)")
 
+# Compute raw HVAC / BTMS values before rendering any UI
 hvac_power_result = hvac_sim.compute_cabin_hvac_electric_power_kw(ambient_temp_c)
 btms_power_result = hvac_sim.compute_battery_heating_power_kw(ambient_temp_c, battery_initial_temp_c)
 capacity_factor = hvac_sim.compute_capacity_fade_factor(battery_initial_temp_c)
 resistance_multiplier = hvac_sim.compute_internal_resistance_multiplier(battery_initial_temp_c)
 
+# Cabin heating — with COP shown as hover tooltip
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric(
@@ -166,11 +179,13 @@ with col1:
         f"{hvac_power_result['total_hvac_electric_power_kw']:.2f} kW",
         help=f"Current COP of the heat pump: {hvac_power_result['heat_pump_cop']:.2f}",
     )
+# BTMS
 with col2:
     st.metric(
         "Battery heating power (BTMS)",
         f"{btms_power_result['total_btms_electric_power_kw']:.2f} kW",
     )
+# Capacity fade — delta_color="inverse" because a decrease is bad
 with col3:
     st.metric(
         "Effective battery capacity factor",
@@ -178,6 +193,7 @@ with col3:
         delta=f"{(capacity_factor-1)*100:.1f}% compare to 25°C",
         delta_color="inverse",
     )
+# Resistance multiplier — just a value, higher is worse
 with col4:
     st.metric(
         "Battery internal resistance increase factor",
