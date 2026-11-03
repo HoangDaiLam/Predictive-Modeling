@@ -18,7 +18,7 @@ PREDICTOR_CANDIDATES = [c for c in NUMERIC_COLUMNS if c not in LEAKY]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=Path("data/battery_data.csv"))
+    parser.add_argument("--input", type=Path, default=Path("data/cleaned_data.csv"))
     parser.add_argument("--output-dir", type=Path, default=Path("reports/eda"))
     args = parser.parse_args()
 
