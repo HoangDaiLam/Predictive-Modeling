@@ -281,27 +281,13 @@ class Polestar4Dynamics:
         include_aux_load: bool = True,
         r_mult: float = 1.0,
     ) -> Dict[str, float]:
-        """
-        Chuyển công suất bánh xe (P_wheel) thành công suất rút ra từ pin
-        (P_battery), có phân biệt 2 chế độ vận hành:
-
-        (a) CHẾ ĐỘ KÉO (Driving, P_wheel >= 0):
-            P_battery = P_wheel / eta_drivetrain + P_aux
-            (chia cho hiệu suất vì có tổn hao qua motor + inverter + hộp số)
-
-        (b) CHẾ ĐỘ PHANH TÁI SINH (Regenerative Braking, P_wheel < 0):
-            P_battery = P_wheel * eta_regen_total + P_aux
-            (nhân với hiệu suất vì đây là dòng năng lượng NẠP LẠI pin,
-             luôn có tổn hao trong quá trình chuyển đổi ngược động năng
-             -> điện năng; giới hạn bởi max_regen_power_kw của motor/inverter)
-
-        P_aux: phụ tải điện cơ bản (không tính HVAC — HVAC được cộng riêng
-               ở module winter_hvac.py để tách bạch vật lý thuần tuý xe
-               khỏi hệ thống nhiệt).
-
-        Trả về công suất dương = pin đang XẢ (tiêu thụ),
-        công suất âm = pin đang SẠC (thu hồi năng lượng).
-        """
+        # ALGORITHM: Battery power with I²R loss + regen limit
+        # DRIVING (P_wheel ≥ 0):
+        # P_batt = P_wheel / η + I²·R·r_mult + P_aux
+        #REGEN (P_wheel < 0):
+        # max_regen = −max_regen_kw × 1000 / r_mult
+        # P_batt = clamp(P_wheel, max_regen) × η_regen − I²·R·r_mult + P_aux
+        
         p_wheel = self.compute_wheel_power_w(velocity_mps, acceleration_mps2, grade_angle_rad, air_density)
         p_aux_w = self.aux_power_baseline_kw * 1000.0 if include_aux_load else 0.0
 
@@ -418,20 +404,16 @@ class Polestar4Dynamics:
         air_density: float = AIR_DENSITY_SEA_LEVEL,
         r_mult: float = 1.0,
     ) -> float:
-        """
-        Ước tính năng lượng tiêu thụ cho MỘT ĐOẠN ĐƯỜNG ở tốc độ trung bình
-        ổn định (steady-state, a = 0) — dùng cho bài toán tối ưu tuyến đường
-        (route optimization) ở Bước 4, nơi ta có dữ liệu độ dốc & khoảng
-        cách theo từng đoạn (segment) từ API bản đồ, nhưng không có chu trình
-        vận tốc chi tiết theo giây.
-
-            time_s = distance_m / avg_speed_mps
-            E = P_battery(steady-state) * time_s
-
-        Đây là mô hình steady-state hợp lệ vì giả định xe di chuyển ở tốc độ
-        trung bình ổn định trên đoạn đường đó (a=0), phù hợp cho đoạn cao tốc/
-        tỉnh lộ dài. Với đoạn đô thị nhiều dừng-đi, nên dùng simulate_drive_cycle().
-        """
+        # ALGORITHM: Point-mass longitudinal vehicle dynamics
+        # RECIPE:
+        # F_aero = 0.5 · ρ · Cd · A · v²
+        # F_roll = Crr · m · g · cos(θ)
+        # F_grade = m · g · sin(θ)
+        # F_total = F_aero + F_roll + F_grade
+        # P_wheel = F_total × v
+        # P_batt = P_wheel / η_drivetrain + I²R·r_mult + P_aux (I = P_batt / V_pack)
+        # t = distance_m / v
+        # E = P_batt × t
         if avg_speed_mps <= 0:
             return 0.0
 

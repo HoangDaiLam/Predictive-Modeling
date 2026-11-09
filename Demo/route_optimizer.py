@@ -145,26 +145,17 @@ class RouteOptimizationEngine:
     # PHÂN TÍCH MỘT TUYẾN ĐƯỜNG DUY NHẤT
     # ------------------------------------------------------------------
     def analyze_route(self, route: RouteCandidate) -> RouteAnalysisResult:
-        """
-        Tính toán chi tiết năng lượng tiêu thụ cho MỘT tuyến đường, bằng
-        cách lặp qua từng RouteSegment và:
+        # ALGORITHM: Full route energy analysis
+        # FORMULA:
+        #   E_driving = fsum(E_segment for each segment)
+        #   E_winter  = fsum(E_winter_segment for each segment)
+        #              + cabin_warmup_kwh
+        #              + battery_preheat_kwh
+        #   E_total   = math.fsum([E_driving, E_winter])
+        #   battery_percent_consumed = E_total / effective_capacity × 100
+        #
+        # NOTE: cabin_warmup and battery_preheat are added ONCE, not repeated for each segment.
 
-        1. Dùng Polestar4Dynamics.compute_segment_energy_kwh() để tính năng
-           lượng động lực học thuần tuý (aero + rolling + grade), với khối
-           lượng riêng không khí (rho) được hiệu chỉnh theo nhiệt độ thực tế
-           của đoạn đường đó (khí lạnh đặc hơn -> aero drag cao hơn).
-
-        2. Dùng WinterHVACSimulation.compute_total_winter_energy_overhead()
-           để tính năng lượng hao hụt do HVAC cabin + BTMS pin trong thời
-           gian di chuyển qua đoạn đó.
-
-        3. Cộng dồn (sum) toàn bộ các đoạn để ra tổng năng lượng tuyến đường.
-
-        Đồng thời tính TOÁN DUNG LƯỢNG PIN KHẢ DỤNG HIỆU DỤNG (effective
-        usable capacity) dựa trên capacity fade factor tại nhiệt độ pin ban
-        đầu — vì trong mùa đông, % pin tiêu thụ phải tính trên dung lượng
-        THỰC TẾ khai thác được, không phải dung lượng danh định lúc 25°C.
-        """
         driving_energy_list: List[float] = []
         e_aero = 0.0
         e_roll = 0.0
@@ -271,6 +262,8 @@ class RouteOptimizationEngine:
             effective_usable_capacity_kwh=round(effective_capacity_kwh, 3),
             avg_consumption_kwh_per_km=round(avg_consumption, 4),
             max_grade_percent=route.max_grade_percent,
+            # ALGORITHM: Max grade across segments
+            # FORMULA: max(s.grade_percent for s in self.segments)
             total_elevation_gain_m=round(route.total_elevation_gain_m, 1),
             segment_breakdown=segment_breakdown,
             energy_aero_kwh=round(e_aero, 4),
@@ -290,7 +283,11 @@ class RouteOptimizationEngine:
         cv_speed: float = 0.05,
         sigma_temp: float = 1.5,
     ) -> Dict[str, float]:
-        """Monte Carlo P10/P50/P90 cho 1 tuyến. Nhiễu vào Crr, Cd, U-value, tốc độ, nhiệt độ."""
+        # ALGORITHM: Monte Carlo uncertainty quantification
+        # FORMULA:
+        #   Noise: Crr ±10%, Cd ±5%, U ±15%, v ±5%, T ±1.5°C
+        #   Run analyze_route 300 times with perturbed parameters
+        #   Sort samples → P10 = samples[30], P50 = samples[150], P90 = samples[270]
         samples: List[float] = []
         for _ in range(n_samples):
             v = dataclasses.replace(
@@ -341,7 +338,10 @@ class RouteOptimizationEngine:
         v_max_kmh: int = 130,
         v_step_kmh: int = 5,
     ) -> Dict[str, Any]:
-        """Tính kWh/km theo tốc độ. Trả về dãy + điểm cực tiểu."""
+        # ALGORITHM: Optimal speed search
+        # FORMULA: kWh/km(v) = (P_batt(v) + P_HVAC) × 1000 / (v_mps × 3.6e6)
+        # SWEEP: v from 30 to 130 km/h, step 5
+        # OUTPUT: v_opt = argmin(kWh/km)
         rho = air_density_at_temperature(temp_c)
         th = Polestar4Dynamics.grade_percent_to_radians(grade_percent)
         p_hvac_w = self.hvac_sim.compute_cabin_hvac_electric_power_kw(temp_c)[
@@ -419,6 +419,12 @@ class RouteOptimizationEngine:
         runner_up = results_sorted[1] if len(results_sorted) > 1 else None
 
         explanation = self._generate_explanation(optimal, runner_up, results_sorted)
+        # ALGORITHM: Data-driven explanation
+        # FORMULA:
+        #   Δcomponent = optimal.energy_component − runner_up.energy_component
+        #   advantage = min(Δ) among negative values
+        #   penalty   = max(Δ) among positive values
+        # Output: main advantage/penalty by component
 
         return {
             "all_results": [self._result_to_dict(r) for r in results],

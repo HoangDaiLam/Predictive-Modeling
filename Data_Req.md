@@ -35,71 +35,22 @@ kWh/km
 
 We need to identify variables that may influence energy consumption.
 
-## 2.1 Vehicle-Related Data
-
-| Variable | Unit | Purpose |
-|---|---:|---|
-| Vehicle speed | km/h | Represents driving speed |
-| Acceleration | m/s² | Represents changes in speed |
-| Distance | km | Used to calculate consumption |
-| Battery SOC | % | Represents current battery charge |
-| Battery temperature | °C | Can affect battery efficiency |
-| Battery health | % | Represents battery condition |
-| Motor power | kW | Represents motor energy demand |
-| Regenerative braking | Level/category | Represents energy recovery |
-| Driving mode | Category | Represents vehicle operating mode |
-| Tire pressure | bar | Affects rolling resistance |
-| Vehicle payload | kg | Additional vehicle mass |
-
----
-
-## 2.2 Environmental Data
-
-| Variable | Unit/Type | Purpose |
-|---|---|---|
-| Ambient temperature | °C | Temperature affects vehicle and battery behaviour |
-| Weather condition | Category | Represents snow, rain, dry, etc. |
-| Snow/ice condition | Category/index | Represents winter road conditions |
-| Wind speed | km/h or m/s | Affects aerodynamic resistance |
-| Wind direction | degrees/category | Determines wind effect |
-| Humidity | % | Environmental variable |
-| Precipitation | mm | Represents rain/snow conditions |
-
-Not every variable necessarily has to be included in the final model. We first identify possible variables and then determine which ones are available and useful.
-
----
-
-# 3. Road and Route Data
-
-Road and route conditions can influence energy consumption.
-
-| Variable | Unit/Type | Purpose |
-|---|---|---|
-| Elevation | m | Represents altitude |
-| Road gradient | % | Represents uphill/downhill driving |
-| Road quality | Category/index | Represents road surface condition |
-| Road type | Category | Highway, urban, rural, etc. |
-| Distance | km | Represents trip length |
-| Route | GPS coordinates | Identifies the vehicle's path |
-| Traffic density | Category/value | Represents traffic conditions |
-| Number of stops | Count | Represents frequent stopping and starting |
-
----
-
-# 4. Cabin and Electrical Loads
-
-Energy is also consumed by systems other than the motors.
-
-| Variable | Unit/Type | Purpose |
-|---|---|---|
-| AC/HVAC usage | On/off or power | Climate-control consumption |
-| Heating usage | On/off or power | Heating demand |
-| Cooling usage | On/off or power | Cooling demand |
-| Exterior equipment | On/off or power | Additional electrical load |
-| Lights | On/off or power | Lighting consumption |
-| Other electrical loads | W/kW | Additional energy demand |
-
----
+| Category | Factor | What we should collect | Unit / format |
+|---|---|---|---|
+| **Battery** | Battery level | State of charge (SOC) | % |
+| **Driving** | Current driving pattern | Speed, acceleration/braking behaviour | km/h, m/s² |
+| **Driving** | Historical driving pattern | Previous driving/consumption behaviour | Time-series |
+| **Driving** | Speed | Vehicle speed | km/h |
+| **Traffic** | Traffic / city-driving situation | Traffic condition and frequent stopping/starting | Category / measurable values |
+| **Temperature** | Outside temperature | Ambient temperature | °C |
+| **Battery** | Battery temperature | Traction-battery temperature | °C |
+| **Preconditioning** | Vehicle/battery preconditioning | Whether preconditioning is active | On/Off |
+| **Climate** | Climate settings | Climate-control usage/settings | On/Off / settings |
+| **Tyres** | Tyre condition | Tyre condition | Available measurement/category |
+| **Tyres** | Tyre pressure | Tyre pressure | bar |
+| **Road** | Road condition | Road surface/condition | Category |
+| **Topography** | Slopes/topography | Uphill/downhill/elevation characteristics | % / m |
+| **Towing** | Towing | Whether a trailer is being towed | Yes/No |
 
 # 5. What Type of Data Will We Work With?
 
