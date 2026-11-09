@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "row_count": 10000,
+  "column_count": 45,
+  "checks": {
+    "required_columns_present": true,
+    "no_nulls": true,
+    "unique_sample_ids": true,
+    "no_duplicate_rows": true,
+    "numeric_ranges_valid": true,
+    "distance_duration_speed_identity": true,
+    "energy_intensity_identity": true,
+    "positive_distance_and_duration": true
+  },
+  "null_counts": {},
+  "duplicate_sample_ids": 0,
+  "range_violations": {},
+  "speed_identity_max_abs_error_kmh": 1.9715437858280893e-05,
+  "speed_identity_mismatch_count": 0,
+  "energy_intensity_max_abs_error": 2.493297234806846e-05,
+  "energy_intensity_mismatch_count": 0,
+  "target_summary": {
+    "energy_kwh_mean": 3.0438011655,
+    "energy_kwh_min": 0.114703,
+    "energy_kwh_max": 35.449542,
+    "kwh_per_100km_mean": 13.1140386719
+  }
+}
