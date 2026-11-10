@@ -1,0 +1,13 @@
+trip_id,weather,performance_mode,ambient_temperature,wind_speed,elevation,traffic_density,total_payload,tire_pressure,battery_health,battery_consumption
+1,Snow,Standard,-8.0,12.0,145.0,3,180.0,2.6,100.0,22.4
+2,snow,standard,-5.0,8.0,120.0,2,160.0,2.7,100.0,19.8
+3,Rain,Standard,4.0,15.0,80.0,4,210.0,2.6,100.0,21.3
+4,Dry,Standard,12.0,5.0,35.0,1,120.0,2.7,100.0,16.2
+5,Snow,Standard,-12.0,20.0,200.0,5,250.0,2.5,100.0,28.7
+6,Rain,Standard,7.0,10.0,60.0,3,190.0,2.6,100.0,20.1
+7,Dry,Standard,18.0,3.0,15.0,1,100.0,2.8,100.0,14.5
+8,SNOW,STANDARD,-3.0,7.0,110.0,2,150.0,2.7,100.0,18.9
+9,Rain,Standard,2.0,11.0,95.0,3,175.0,2.6,100.0,21.0
+10,Dry,Standard,10.0,6.0,50.0,2,140.0,2.7,100.0,17.3
+10,Dry,Standard,10.0,6.0,50.0,2,140.0,2.7,100.0,17.3
+11,Snow,Standard,-7.0,-4.0,130.0,3,-20.0,2.6,105.0,23.1
