@@ -1,26 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-================================================================================
-MODULE: route_optimizer.py
-BƯỚC 4 — Route Optimization Algorithm (AI Engine trung tâm)
-================================================================================
-Mục đích:
-    Kết hợp 3 module đã xây dựng:
-        - vehicle_dynamics.py  (Polestar4Dynamics)
-        - winter_hvac.py       (WinterHVACSimulation)
-        - api_integration.py   (dữ liệu route/elevation/weather)
-    để PHÂN TÍCH VÀ SO SÁNH nhiều tuyến đường khả dụng giữa điểm A và B,
-    từ đó chọn ra tuyến đường TỐI ƯU về năng lượng (tiêu thụ pin thấp nhất),
-    kèm giải thích chi tiết lý do lựa chọn.
+MODULE: route_optimizer.py — BƯỚC 4 (v3+, full)
 
-Kiến trúc dữ liệu:
-    RouteSegment: 1 đoạn nhỏ của tuyến đường (khoảng cách, tốc độ TB, độ dốc,
-                  nhiệt độ môi trường tại đoạn đó)
-    RouteCandidate: 1 tuyến đường hoàn chỉnh = danh sách nhiều RouteSegment
-    RouteAnalysisResult: kết quả phân tích chi tiết cho 1 tuyến đường
-================================================================================
+RouteSegment chứa ĐẦY ĐỦ 22 field (4 base + 6 patch v2 + 12 data_req mới).
+Engine có ĐẦY ĐỦ: analyze_route, compare_and_optimize, score_route,
+monte_carlo_route, speed_curve, build_route_candidate_from_api.
+
+Dashboard v2 (đang chạy trên máy bạn) sẽ chạy được ngay, không cần sửa.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,30 +16,59 @@ import math
 import random
 import dataclasses
 
-from vehicle_dynamics import Polestar4Dynamics, AIR_DENSITY_SEA_LEVEL, air_density_at_temperature
+from vehicle_dynamics import Polestar4Dynamics, air_density_at_temperature
 from winter_hvac import WinterHVACSimulation
 from api_integration import (
-    APIConfig,
-    APIIntegrationError,
-    fetch_route_alternatives,
-    fetch_elevation_profile,
-    fetch_temperature_profile_along_route,
-    decode_polyline,
+    APIConfig, APIIntegrationError,
+    fetch_route_alternatives, fetch_elevation_profile,
+    fetch_temperature_profile_along_route, decode_polyline,
     generate_mock_elevation_profile,
 )
 
 
+def _bearing_deg(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Initial bearing from point 1 to point 2, degrees [0, 360)."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lng2 - lng1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
 # ============================================================================
-# CẤU TRÚC DỮ LIỆU TUYẾN ĐƯỜNG
+# RouteSegment — 22 fields
 # ============================================================================
 @dataclass
 class RouteSegment:
-    """Một đoạn đường nhỏ với các thông số cần thiết để tính năng lượng."""
+    # --- 4 base ---
     distance_m: float
     avg_speed_kmh: float
-    grade_percent: float          # độ dốc trung bình đoạn này (%), dương = lên dốc
-    ambient_temp_c: float         # nhiệt độ môi trường tại đoạn này (°C)
+    grade_percent: float
+    ambient_temp_c: float
 
+    # --- 6 patch v2 (data_req: wind, tire, road quality) ---
+    wind_speed_mps: float = 0.0
+    wind_dir_deg: float = 0.0
+    heading_deg: float = 0.0
+    tire_pressure_bar: float = 2.8
+    tire_type: str = "allseason"
+    road_surface: str = "dry"
+
+    # --- 12 v3 (data_req Mục 2 + Mục 15) ---
+    acceleration_mps2: float = 0.0
+    elevation_m: float = 0.0
+    traffic_density: float = 2.0
+    hvac_on: bool = True
+    climate_target_c: float = 22.0
+    regen_availability_pct: float = 100.0
+    driving_mode: str = "standard"
+    weather: str = "clear"
+    towing: bool = False
+    preconditioning: bool = False
+    historical_speed_avg_kmh: float = 0.0
+    tire_condition: str = "used"
+
+    # --- PROPERTIES ---
     @property
     def avg_speed_mps(self) -> float:
         return self.avg_speed_kmh / 3.6
@@ -63,17 +79,53 @@ class RouteSegment:
 
     @property
     def duration_s(self) -> float:
-        if self.avg_speed_mps <= 0:
+        return self.distance_m / self.avg_speed_mps if self.avg_speed_mps > 0 else 0.0
+
+    @property
+    def wind_along_mps(self) -> float:
+        """D1: + = tailwind, − = headwind."""
+        if self.wind_speed_mps == 0.0:
             return 0.0
-        return self.distance_m / self.avg_speed_mps
+        phi = math.radians(self.heading_deg - self.wind_dir_deg)
+        return self.wind_speed_mps * math.cos(phi)
+
+    @property
+    def crr_multiplier(self) -> float:
+        """D10: pressure × tire_type × tire_condition × road_surface."""
+        p = (2.8 / max(self.tire_pressure_bar, 0.5)) ** 0.3
+        t = {"summer": 0.95, "allseason": 1.00, "winter": 1.15}.get(self.tire_type, 1.0)
+        c = {"new": 1.02, "used": 1.00, "worn": 0.98}.get(self.tire_condition, 1.0)
+        s = {"dry": 1.00, "wet": 1.25, "snow": 2.00, "ice": 2.50}.get(self.road_surface, 1.0)
+        return p * t * c * s
+
+    @property
+    def driving_mode_efficiency_mult(self) -> float:
+        return {"eco": 1.03, "standard": 1.00, "performance": 0.97}.get(self.driving_mode, 1.0)
+
+    @property
+    def driving_mode_aux_mult(self) -> float:
+        return {"eco": 0.80, "standard": 1.00, "performance": 1.20}.get(self.driving_mode, 1.0)
+
+    @property
+    def weather_fresh_air_mult(self) -> float:
+        return {"clear": 1.00, "rain": 1.20, "snow": 1.30, "fog": 1.40}.get(self.weather, 1.0)
+
+    @property
+    def traffic_overhead_factor(self) -> float:
+        """Stop-start cycles → extra energy."""
+        d = max(self.traffic_density, 0.0)
+        return 1.0 + 0.03 * (d ** 1.5)
+
+    @property
+    def effective_payload_kg(self) -> float:
+        return 500.0 if self.towing else 0.0
 
 
 @dataclass
 class RouteCandidate:
-    """Một tuyến đường hoàn chỉnh, ứng viên để so sánh."""
     route_name: str
     segments: List[RouteSegment]
-    description: str = ""  # mô tả định tính (ví dụ: "Cao tốc trực tiếp", "Đường vòng tránh đèo")
+    description: str = ""
 
     @property
     def total_distance_km(self) -> float:
@@ -97,16 +149,15 @@ class RouteCandidate:
 
 @dataclass
 class RouteAnalysisResult:
-    """Kết quả phân tích năng lượng chi tiết cho MỘT tuyến đường."""
     route_name: str
     description: str
     distance_km: float
     duration_min: float
-    driving_energy_kwh: float          # năng lượng do động lực học xe (Bước 1)
-    winter_overhead_kwh: float         # năng lượng do HVAC + BTMS (Bước 2)
-    total_energy_kwh: float            # tổng năng lượng tiêu thụ
-    battery_percent_consumed: float    # % pin tiêu thụ (trên dung lượng khả dụng hiệu dụng)
-    effective_usable_capacity_kwh: float  # dung lượng pin khả dụng SAU khi trừ capacity fade do lạnh
+    driving_energy_kwh: float
+    winter_overhead_kwh: float
+    total_energy_kwh: float
+    battery_percent_consumed: float
+    effective_usable_capacity_kwh: float
     avg_consumption_kwh_per_km: float
     max_grade_percent: float
     total_elevation_gain_m: float
@@ -119,153 +170,138 @@ class RouteAnalysisResult:
 
 
 # ============================================================================
-# ENGINE PHÂN TÍCH & TỐI ƯU TUYẾN ĐƯỜNG
+# ENGINE
 # ============================================================================
 class RouteOptimizationEngine:
-    """
-    AI Engine trung tâm: nhận vào danh sách các tuyến đường ứng viên
-    (RouteCandidate), tính toán năng lượng tiêu thụ đầy đủ cho từng tuyến
-    (kết hợp vật lý xe + ảnh hưởng mùa đông), và đưa ra quyết định tuyến
-    đường tối ưu kèm giải thích.
-    """
-
-    def __init__(
-        self,
-        vehicle: Optional[Polestar4Dynamics] = None,
-        hvac_sim: Optional[WinterHVACSimulation] = None,
-        battery_initial_temp_c: Optional[float] = None,
-        time_to_precondition_s: float = 900.0,
-    ):
+    def __init__(self, vehicle=None, hvac_sim=None,
+                 battery_initial_temp_c=None, time_to_precondition_s=900.0):
         self.vehicle = vehicle or Polestar4Dynamics()
         self.hvac_sim = hvac_sim or WinterHVACSimulation()
         self.battery_initial_temp_c = battery_initial_temp_c
         self.time_to_precondition_s = time_to_precondition_s
 
     # ------------------------------------------------------------------
-    # PHÂN TÍCH MỘT TUYẾN ĐƯỜNG DUY NHẤT
+    def _build_trip_objects(self, seg: RouteSegment):
+        """Clone vehicle + hvac theo scenario (mode, towing, weather,
+        climate_target, regen_availability). Không sửa object gốc."""
+        v = dataclasses.replace(
+            self.vehicle,
+            payload_kg=self.vehicle.payload_kg + seg.effective_payload_kg,
+            drivetrain_efficiency=self.vehicle.drivetrain_efficiency
+                                   * seg.driving_mode_efficiency_mult,
+            aux_power_baseline_kw=self.vehicle.aux_power_baseline_kw
+                                   * seg.driving_mode_aux_mult,
+            max_regen_power_kw=self.vehicle.max_regen_power_kw
+                                   * max(seg.regen_availability_pct, 0.0) / 100.0,
+        )
+        h = dataclasses.replace(
+            self.hvac_sim,
+            cabin_target_temp_c=seg.climate_target_c,
+            hvac_fresh_air_flow_m3_per_h=self.hvac_sim.hvac_fresh_air_flow_m3_per_h
+                                         * seg.weather_fresh_air_mult,
+        )
+        return v, h
+
     # ------------------------------------------------------------------
     def analyze_route(self, route: RouteCandidate) -> RouteAnalysisResult:
-        # ALGORITHM: Full route energy analysis
-        # FORMULA:
-        #   E_driving = fsum(E_segment for each segment)
-        #   E_winter  = fsum(E_winter_segment for each segment)
-        #              + cabin_warmup_kwh
-        #              + battery_preheat_kwh
-        #   E_total   = math.fsum([E_driving, E_winter])
-        #   battery_percent_consumed = E_total / effective_capacity × 100
-        #
-        # NOTE: cabin_warmup and battery_preheat are added ONCE, not repeated for each segment.
-
-        driving_energy_list: List[float] = []
-        e_aero = 0.0
-        e_roll = 0.0
-        e_grade = 0.0
-        e_hvac = 0.0
-        e_btms = 0.0
-        winter_overhead_list: List[float] = []
-        segment_breakdown: List[Dict[str, Any]] = []
+        driving_energy_list, winter_overhead_list = [], []
+        e_aero = e_roll = e_grade = e_hvac = e_btms = 0.0
+        breakdown = []
 
         for i, seg in enumerate(route.segments):
+            vehicle, hvac = self._build_trip_objects(seg)
             rho = air_density_at_temperature(seg.ambient_temp_c)
 
-            # --- (1) Năng lượng động lực học thuần tuý ---
-            driving_energy_kwh = self.vehicle.compute_segment_energy_kwh(
+            # Driving energy
+            e_drive = vehicle.compute_segment_energy_kwh(
                 distance_m=seg.distance_m,
                 avg_speed_mps=seg.avg_speed_mps,
                 grade_angle_rad=seg.grade_angle_rad,
-                air_density=rho,
-                r_mult=1.0,
+                air_density=rho, r_mult=1.0,
+                wind_along_mps=seg.wind_along_mps,
+                crr_mult=seg.crr_multiplier,
             )
+            e_drive *= seg.traffic_overhead_factor
 
-            # --- (2) Năng lượng hao hụt do HVAC + BTMS trên đoạn này ---
-            # Chỉ áp dụng BTMS "pull-down" (làm nóng pin từ lạnh) cho ĐOẠN ĐẦU
-            # TIÊN của tuyến (giả định pin đã đạt nhiệt độ vận hành sau đó);
-            # các đoạn sau chỉ tính chi phí "duy trì" nhiệt độ (holding loss).
-            # BTMS: mọi đoạn chỉ tính giữ nhiệt (pin đã ấm sau khi preheat)
-            winter_result = self.hvac_sim.compute_total_winter_energy_overhead(
-                ambient_temp_c=seg.ambient_temp_c,
-                trip_duration_s=seg.duration_s,
-                distance_km=seg.distance_m / 1000.0,
-                initial_battery_temp_c=self.hvac_sim.battery_target_temp_c,
-                time_to_target_s=self.time_to_precondition_s,
+            # Winter overhead
+            if seg.hvac_on:
+                winter = hvac.compute_total_winter_energy_overhead(
+                    ambient_temp_c=seg.ambient_temp_c,
+                    trip_duration_s=seg.duration_s,
+                    distance_km=seg.distance_m / 1000.0,
+                    initial_battery_temp_c=hvac.battery_target_temp_c,
+                    time_to_target_s=self.time_to_precondition_s,
+                )
+                e_winter = winter["total_winter_overhead_kwh"]
+                e_hvac  += winter["hvac_energy_kwh"]
+                e_btms  += winter["btms_energy_kwh"]
+            else:
+                e_winter = 0.0
+
+            # Force decomposition
+            f = vehicle.compute_total_tractive_force(
+                seg.avg_speed_mps, 0.0, seg.grade_angle_rad, rho,
+                wind_along_mps=seg.wind_along_mps, crr_mult=seg.crr_multiplier,
             )
-            winter_overhead_kwh = winter_result["total_winter_overhead_kwh"]
-            # Phân rã lực để giải thích (không dùng cho tổng)
-            _f = self.vehicle.compute_total_tractive_force(
-                seg.avg_speed_mps, 0.0, seg.grade_angle_rad, rho
-            )
-            _k = seg.distance_m / 3_600_000.0 / self.vehicle.drivetrain_efficiency
-            e_aero  += _f["f_aero_N"]  * _k
-            e_roll  += _f["f_roll_N"]  * _k
-            e_grade += _f["f_grade_N"] * _k
-            e_hvac  += winter_result["hvac_energy_kwh"]
-            e_btms  += winter_result["btms_energy_kwh"]
+            k = seg.distance_m / 3_600_000.0 / vehicle.drivetrain_efficiency
+            e_aero  += f["f_aero_N"]  * k
+            e_roll  += f["f_roll_N"]  * k
+            e_grade += f["f_grade_N"] * k
 
-            driving_energy_list.append(driving_energy_kwh)
-            winter_overhead_list.append(winter_overhead_kwh)
-
-            segment_breakdown.append({
+            driving_energy_list.append(e_drive)
+            winter_overhead_list.append(e_winter)
+            breakdown.append({
                 "segment_index": i,
-                "distance_km": round(seg.distance_m / 1000.0, 3),
+                "distance_km": round(seg.distance_m / 1000, 3),
                 "avg_speed_kmh": seg.avg_speed_kmh,
                 "grade_percent": seg.grade_percent,
                 "ambient_temp_c": seg.ambient_temp_c,
-                "driving_energy_kwh": round(driving_energy_kwh, 4),
-                "winter_overhead_kwh": round(winter_overhead_kwh, 4),
-                "segment_total_kwh": round(driving_energy_kwh + winter_overhead_kwh, 4),
+                "wind_along_mps": round(seg.wind_along_mps, 2),
+                "crr_multiplier": round(seg.crr_multiplier, 3),
+                "traffic_factor": round(seg.traffic_overhead_factor, 3),
+                "driving_energy_kwh": round(e_drive, 4),
+                "winter_overhead_kwh": round(e_winter, 4),
+                "segment_total_kwh": round(e_drive + e_winter, 4),
             })
 
-        # Preheat pin tính MỘT LẦN cho cả chuyến (không lặp lại mỗi segment)
-        # Warm-up cabin: cabin khởi hành = nhiệt độ môi trường (chưa sưởi)
-        cabin_start = route.segments[0].ambient_temp_c
-        cabin_warmup_kwh = self.hvac_sim.compute_cabin_warmup_energy_kwh(cabin_start)
-        winter_overhead_list.append(cabin_warmup_kwh)
-        if self.battery_initial_temp_c is not None:
-            preheat_kwh = self.hvac_sim.compute_battery_preheat_energy_kwh(
-                self.battery_initial_temp_c
+        # Warmup cabin + preheat battery — MỘT LẦN, bỏ qua nếu preconditioning
+        first = route.segments[0]
+        if not first.preconditioning and first.hvac_on:
+            winter_overhead_list.append(
+                self.hvac_sim.compute_cabin_warmup_energy_kwh(first.ambient_temp_c)
             )
-            winter_overhead_list.append(preheat_kwh)
+        if not first.preconditioning and self.battery_initial_temp_c is not None:
+            winter_overhead_list.append(
+                self.hvac_sim.compute_battery_preheat_energy_kwh(self.battery_initial_temp_c)
+            )
 
-        driving_energy_kwh_total = math.fsum(driving_energy_list)
-        winter_overhead_kwh_total = math.fsum(winter_overhead_list)
-        total_energy_kwh = math.fsum([
-            driving_energy_kwh_total, winter_overhead_kwh_total
-        ])
+        e_drive_total = math.fsum(driving_energy_list)
+        e_winter_total = math.fsum(winter_overhead_list)
+        e_total = e_drive_total + e_winter_total
 
-        # --- Dung lượng pin khả dụng hiệu dụng theo nhiệt độ pin ban đầu ---
-        ref_battery_temp = (
-            self.battery_initial_temp_c
-            if self.battery_initial_temp_c is not None
-            else route.segments[0].ambient_temp_c
+        ref_temp = (self.battery_initial_temp_c
+                    if self.battery_initial_temp_c is not None
+                    else first.ambient_temp_c)
+        cap_eff = self.hvac_sim.compute_effective_usable_capacity_kwh(
+            self.vehicle.battery_usable_capacity_kwh, ref_temp,
         )
-        effective_capacity_kwh = self.hvac_sim.compute_effective_usable_capacity_kwh(
-            nominal_usable_capacity_kwh=self.vehicle.battery_usable_capacity_kwh,
-            battery_temp_c=ref_battery_temp,
-        )
-
-        battery_percent_consumed = (
-            (total_energy_kwh / effective_capacity_kwh) * 100.0 if effective_capacity_kwh > 0 else float("inf")
-        )
-
-        distance_km = route.total_distance_km
-        avg_consumption = total_energy_kwh / distance_km if distance_km > 0 else 0.0
+        pct = (e_total / cap_eff * 100.0) if cap_eff > 0 else float("inf")
+        dist_km = route.total_distance_km
+        avg = e_total / dist_km if dist_km > 0 else 0.0
 
         return RouteAnalysisResult(
-            route_name=route.route_name,
-            description=route.description,
-            distance_km=round(distance_km, 3),
+            route_name=route.route_name, description=route.description,
+            distance_km=round(dist_km, 3),
             duration_min=round(route.total_duration_s / 60.0, 2),
-            driving_energy_kwh=round(driving_energy_kwh_total, 4),
-            winter_overhead_kwh=round(winter_overhead_kwh_total, 4),
-            total_energy_kwh=round(total_energy_kwh, 4),
-            battery_percent_consumed=round(battery_percent_consumed, 3),
-            effective_usable_capacity_kwh=round(effective_capacity_kwh, 3),
-            avg_consumption_kwh_per_km=round(avg_consumption, 4),
+            driving_energy_kwh=round(e_drive_total, 4),
+            winter_overhead_kwh=round(e_winter_total, 4),
+            total_energy_kwh=round(e_total, 4),
+            battery_percent_consumed=round(pct, 3),
+            effective_usable_capacity_kwh=round(cap_eff, 3),
+            avg_consumption_kwh_per_km=round(avg, 4),
             max_grade_percent=route.max_grade_percent,
-            # ALGORITHM: Max grade across segments
-            # FORMULA: max(s.grade_percent for s in self.segments)
             total_elevation_gain_m=round(route.total_elevation_gain_m, 1),
-            segment_breakdown=segment_breakdown,
+            segment_breakdown=breakdown,
             energy_aero_kwh=round(e_aero, 4),
             energy_rolling_kwh=round(e_roll, 4),
             energy_grade_kwh=round(e_grade, 4),
@@ -273,97 +309,9 @@ class RouteOptimizationEngine:
             energy_btms_kwh=round(e_btms, 4),
         )
 
-    def monte_carlo_route(
-        self,
-        route: RouteCandidate,
-        n_samples: int = 300,
-        cv_crr: float = 0.10,
-        cv_cd: float = 0.05,
-        cv_u: float = 0.15,
-        cv_speed: float = 0.05,
-        sigma_temp: float = 1.5,
-    ) -> Dict[str, float]:
-        # ALGORITHM: Monte Carlo uncertainty quantification
-        # FORMULA:
-        #   Noise: Crr ±10%, Cd ±5%, U ±15%, v ±5%, T ±1.5°C
-        #   Run analyze_route 300 times with perturbed parameters
-        #   Sort samples → P10 = samples[30], P50 = samples[150], P90 = samples[270]
-        samples: List[float] = []
-        for _ in range(n_samples):
-            v = dataclasses.replace(
-                self.vehicle,
-                rolling_resistance_coeff=self.vehicle.rolling_resistance_coeff
-                    * random.gauss(1.0, cv_crr),
-                drag_coefficient_cd=self.vehicle.drag_coefficient_cd
-                    * random.gauss(1.0, cv_cd),
-            )
-            h = dataclasses.replace(
-                self.hvac_sim,
-                cabin_u_value_w_m2k=self.hvac_sim.cabin_u_value_w_m2k
-                    * random.gauss(1.0, cv_u),
-            )
-            # Nhiễu tốc độ + nhiệt độ từng segment
-            noisy_segments = [
-                dataclasses.replace(
-                    s,
-                    avg_speed_kmh=s.avg_speed_kmh * random.gauss(1.0, cv_speed),
-                    ambient_temp_c=s.ambient_temp_c + random.gauss(0.0, sigma_temp),
-                )
-                for s in route.segments
-            ]
-            noisy_route = RouteCandidate(
-                route.route_name, noisy_segments, route.description
-            )
-            eng = RouteOptimizationEngine(
-                vehicle=v, hvac_sim=h,
-                battery_initial_temp_c=self.battery_initial_temp_c,
-            )
-            samples.append(eng.analyze_route(noisy_route).total_energy_kwh)
-
-        samples.sort()
-        n = len(samples)
-        return {
-            "p10": samples[n // 10],
-            "p50": samples[n // 2],
-            "p90": samples[9 * n // 10],
-            "mean": math.fsum(samples) / n,
-            "n_samples": n,
-        }
-
-    def speed_curve(
-        self,
-        grade_percent: float,
-        temp_c: float,
-        v_min_kmh: int = 30,
-        v_max_kmh: int = 130,
-        v_step_kmh: int = 5,
-    ) -> Dict[str, Any]:
-        # ALGORITHM: Optimal speed search
-        # FORMULA: kWh/km(v) = (P_batt(v) + P_HVAC) × 1000 / (v_mps × 3.6e6)
-        # SWEEP: v from 30 to 130 km/h, step 5
-        # OUTPUT: v_opt = argmin(kWh/km)
-        rho = air_density_at_temperature(temp_c)
-        th = Polestar4Dynamics.grade_percent_to_radians(grade_percent)
-        p_hvac_w = self.hvac_sim.compute_cabin_hvac_electric_power_kw(temp_c)[
-            "total_hvac_electric_power_kw"
-        ] * 1000.0
-
-        curve = []
-        for v_kmh in range(v_min_kmh, v_max_kmh + 1, v_step_kmh):
-            v_mps = v_kmh / 3.6
-            p_batt_w = self.vehicle.compute_battery_power_w(
-                velocity_mps=v_mps, acceleration_mps2=0.0,
-                grade_angle_rad=th, air_density=rho,
-            )["p_battery_total_w"]
-            # kWh/km = (P_total / v) * (1h/1000m) * (1kWh/3.6e6 J) *3600...
-            # = (P_w / v_mps) / 3.6e6 * 1000  →  nhưng đơn vị cần chuẩn:
-            # P[W] / v[m/s] = J/m; J/m × 1000 m/km / 3.6e6 J/kWh = kWh/km
-            kwh_per_km = (p_batt_w + p_hvac_w) / v_mps * 1000.0 / 3_600_000.0
-            curve.append((v_kmh, kwh_per_km))
-
-        v_opt, kwh_opt = min(curve, key=lambda x: x[1])
-        return {"curve": curve, "v_opt_kmh": v_opt, "kwh_per_km_opt": kwh_opt}
-
+    # ------------------------------------------------------------------
+    # SCORING
+    # ------------------------------------------------------------------
     def score_route(
         self,
         result: RouteAnalysisResult,
@@ -372,14 +320,13 @@ class RouteOptimizationEngine:
         w_energy: float = 1.0,
         w_time: float = 0.0,
     ) -> float:
-        """Hàm mục tiêu có ràng buộc SoC. Trả về inf nếu vi phạm reserve."""
         arrival_soc = soc_start_pct - result.battery_percent_consumed
         if arrival_soc < reserve_pct:
             return float("inf")
         return w_energy * result.total_energy_kwh + w_time * (result.duration_min / 60.0)
 
     # ------------------------------------------------------------------
-    # SO SÁNH NHIỀU TUYẾN & CHỌN TUYẾN TỐI ƯU
+    # COMPARE & OPTIMIZE
     # ------------------------------------------------------------------
     def compare_and_optimize(
         self,
@@ -389,14 +336,6 @@ class RouteOptimizationEngine:
         w_energy: float = 1.0,
         w_time: float = 0.0,
     ) -> Dict[str, Any]:
-        """
-        Phân tích toàn bộ danh sách tuyến đường ứng viên, sắp xếp theo tổng
-        năng lượng tiêu thụ tăng dần, và trả về:
-            - all_results: kết quả phân tích chi tiết của TẤT CẢ các tuyến
-            - optimal_route: tuyến đường tối ưu (tiêu thụ pin ít nhất)
-            - explanation: giải thích chi tiết bằng ngôn ngữ tự nhiên (tiếng Việt)
-              lý do tuyến này tối ưu hơn các tuyến còn lại.
-        """
         if not routes:
             raise ValueError("Danh sách routes rỗng, không có gì để tối ưu.")
 
@@ -411,20 +350,12 @@ class RouteOptimizationEngine:
             results_sorted = [r for _, r in feasible]
             needs_charge = False
         else:
-            # Mọi tuyến đều vi phạm → chọn kWh thấp nhất + gắn cờ cần sạc
             results_sorted = sorted(results, key=lambda r: r.total_energy_kwh)
             needs_charge = True
 
         optimal = results_sorted[0]
         runner_up = results_sorted[1] if len(results_sorted) > 1 else None
-
         explanation = self._generate_explanation(optimal, runner_up, results_sorted)
-        # ALGORITHM: Data-driven explanation
-        # FORMULA:
-        #   Δcomponent = optimal.energy_component − runner_up.energy_component
-        #   advantage = min(Δ) among negative values
-        #   penalty   = max(Δ) among positive values
-        # Output: main advantage/penalty by component
 
         return {
             "all_results": [self._result_to_dict(r) for r in results],
@@ -473,158 +404,248 @@ class RouteOptimizationEngine:
             f"Duration: {optimal.duration_min:.0f} min | "
             f"Max grade: {optimal.max_grade_percent:.1f}%"
         )
-
         if runner_up is None:
             return "\n".join(lines)
 
-        delta_energy = runner_up.total_energy_kwh - optimal.total_energy_kwh
+        delta = runner_up.total_energy_kwh - optimal.total_energy_kwh
         lines.append("")
         lines.append(
             f"COMPARED TO RUNNER-UP '{runner_up.route_name}' "
             f"({runner_up.total_energy_kwh:.2f} kWh):"
         )
         lines.append(
-            f"   Optimal saves {delta_energy:.2f} kWh "
-            f"({delta_energy/runner_up.total_energy_kwh*100:.1f}%)."
+            f"   Optimal saves {delta:.2f} kWh "
+            f"({delta / runner_up.total_energy_kwh * 100:.1f}%)."
         )
-
-        # Tìm thành phần chênh lệch lớn nhất
         components = {
-            "aerodynamic drag":   optimal.energy_aero_kwh    - runner_up.energy_aero_kwh,
-            "rolling resistance": optimal.energy_rolling_kwh - runner_up.energy_rolling_kwh,
-            "grade (climbing)":   optimal.energy_grade_kwh   - runner_up.energy_grade_kwh,
-            "HVAC (cabin heat)":  optimal.energy_hvac_kwh    - runner_up.energy_hvac_kwh,
-            "BTMS (battery heat)":optimal.energy_btms_kwh    - runner_up.energy_btms_kwh,
+            "aerodynamic drag":    optimal.energy_aero_kwh    - runner_up.energy_aero_kwh,
+            "rolling resistance":  optimal.energy_rolling_kwh - runner_up.energy_rolling_kwh,
+            "grade (climbing)":    optimal.energy_grade_kwh   - runner_up.energy_grade_kwh,
+            "HVAC (cabin heat)":   optimal.energy_hvac_kwh    - runner_up.energy_hvac_kwh,
+            "BTMS (battery heat)": optimal.energy_btms_kwh    - runner_up.energy_btms_kwh,
         }
-        # Thành phần làm cho tuyến tối ưu RẺ HƠN (âm) là lợi thế chính
-        advantages = {k: v for k, v in components.items() if v < -1e-6}
-        penalties  = {k: v for k, v in components.items() if v >  1e-6}
-
-        if advantages:
-            k_best = min(advantages, key=advantages.get)
-            lines.append(
-                f"   → Main advantage: {k_best} saves "
-                f"{abs(advantages[k_best]):.2f} kWh vs the other route."
-            )
-        if penalties:
-            k_worst = max(penalties, key=penalties.get)
-            lines.append(
-                f"   → Main penalty: {k_worst} costs "
-                f"{penalties[k_worst]:.2f} kWh more than the other route."
-            )
-
+        adv = {k: v for k, v in components.items() if v < -1e-6}
+        pen = {k: v for k, v in components.items() if v >  1e-6}
+        if adv:
+            k = min(adv, key=adv.get)
+            lines.append(f"   → Main advantage: {k} saves {abs(adv[k]):.2f} kWh.")
+        if pen:
+            k = max(pen, key=pen.get)
+            lines.append(f"   → Main penalty: {k} costs {pen[k]:.2f} kWh more.")
         if len(all_ranked) > 2:
             lines.append("")
             lines.append("Ranking (cheapest → most expensive):")
             for i, r in enumerate(all_ranked, start=1):
                 lines.append(f"   {i}. {r.route_name}: {r.total_energy_kwh:.2f} kWh")
-
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # MONTE CARLO
+    # ------------------------------------------------------------------
+    def monte_carlo_route(
+        self,
+        route: RouteCandidate,
+        n_samples: int = 300,
+        cv_crr: float = 0.10,
+        cv_cd: float = 0.05,
+        cv_u: float = 0.15,
+        cv_speed: float = 0.05,
+        cv_wind: float = 0.20,
+        sigma_temp: float = 1.5,
+    ) -> Dict[str, float]:
+        samples: List[float] = []
+        for _ in range(n_samples):
+            v = dataclasses.replace(
+                self.vehicle,
+                rolling_resistance_coeff=self.vehicle.rolling_resistance_coeff
+                    * max(random.gauss(1.0, cv_crr), 0.5),
+                drag_coefficient_cd=self.vehicle.drag_coefficient_cd
+                    * max(random.gauss(1.0, cv_cd), 0.7),
+            )
+            h = dataclasses.replace(
+                self.hvac_sim,
+                cabin_u_value_w_m2k=self.hvac_sim.cabin_u_value_w_m2k
+                    * max(random.gauss(1.0, cv_u), 0.5),
+            )
+            noisy_segs = [
+                dataclasses.replace(
+                    s,
+                    avg_speed_kmh=s.avg_speed_kmh * max(random.gauss(1.0, cv_speed), 0.5),
+                    ambient_temp_c=s.ambient_temp_c + random.gauss(0.0, sigma_temp),
+                    wind_speed_mps=s.wind_speed_mps * max(random.gauss(1.0, cv_wind), 0.0),
+                )
+                for s in route.segments
+            ]
+            noisy_route = RouteCandidate(route.route_name, noisy_segs, route.description)
+            eng = RouteOptimizationEngine(
+                vehicle=v, hvac_sim=h,
+                battery_initial_temp_c=self.battery_initial_temp_c,
+            )
+            samples.append(eng.analyze_route(noisy_route).total_energy_kwh)
+        samples.sort()
+        n = len(samples)
+        return {
+            "p10": samples[n // 10], "p50": samples[n // 2],
+            "p90": samples[9 * n // 10],
+            "mean": math.fsum(samples) / n, "n_samples": n,
+        }
+
+    # ------------------------------------------------------------------
+    # SPEED CURVE
+    # ------------------------------------------------------------------
+    def speed_curve(
+        self,
+        grade_percent: float,
+        temp_c: float,
+        v_min_kmh: int = 30,
+        v_max_kmh: int = 130,
+        v_step_kmh: int = 5,
+        wind_along_mps: float = 0.0,
+        crr_mult: float = 1.0,
+    ) -> Dict[str, Any]:
+        rho = air_density_at_temperature(temp_c)
+        th = Polestar4Dynamics.grade_percent_to_radians(grade_percent)
+        p_hvac_w = self.hvac_sim.compute_cabin_hvac_electric_power_kw(temp_c)[
+            "total_hvac_electric_power_kw"
+        ] * 1000.0
+        curve = []
+        for v_kmh in range(v_min_kmh, v_max_kmh + 1, v_step_kmh):
+            v_mps = v_kmh / 3.6
+            p_batt_w = self.vehicle.compute_battery_power_w(
+                velocity_mps=v_mps, acceleration_mps2=0.0,
+                grade_angle_rad=th, air_density=rho,
+                wind_along_mps=wind_along_mps, crr_mult=crr_mult,
+            )["p_battery_total_w"]
+            kwh_per_km = (p_batt_w + p_hvac_w) / v_mps * 1000.0 / 3_600_000.0
+            curve.append((v_kmh, kwh_per_km))
+        v_opt, kwh_opt = min(curve, key=lambda x: x[1])
+        return {"curve": curve, "v_opt_kmh": v_opt, "kwh_per_km_opt": kwh_opt}
+
 
 # ============================================================================
-# HÀM TIỆN ÍCH: XÂY DỰNG RouteCandidate TỪ DỮ LIỆU API THẬT
+# BUILD RouteCandidate TỪ API
 # ============================================================================
 def build_route_candidate_from_api(
-    route_name: str,
-    description: str,
-    origin: tuple,
-    destination: tuple,
-    api_config: APIConfig,
-    use_mock_on_failure: bool = True,
+    route_name: str, description: str, origin: tuple, destination: tuple,
+    api_config: APIConfig, use_mock_on_failure: bool = True,
+    driving_mode: str = "standard", weather: str = "clear",
+    tire_pressure_bar: float = 2.8, tire_type: str = "allseason",
+    tire_condition: str = "used", road_surface: str = "dry",
+    hvac_on: bool = True, climate_target_c: float = 22.0,
+    regen_availability_pct: float = 100.0,
+    traffic_density: float = 2.0, towing: bool = False,
+    preconditioning: bool = False,
 ) -> RouteCandidate:
-    """
-    Xây dựng RouteCandidate từ Google Routes API (đường thật, không phải
-    đường thẳng), kèm Elevation + Weather trên polyline thực tế.
-    Fallback mock nếu API lỗi.
-    """
-    origin_lat, origin_lng = origin
-    dest_lat, dest_lng = destination
-
+    olat, olng = origin
+    dlat, dlng = destination
+    temp_data = []
     try:
-        # 1. Routes API → alternatives + polyline thật
-        alts = fetch_route_alternatives(origin_lat, origin_lng, dest_lat, dest_lng, api_config)
+        alts = fetch_route_alternatives(olat, olng, dlat, dlng, api_config)
         primary = alts[0]
         polyline = decode_polyline(primary["encoded_polyline"])
-        total_distance_m = primary["distance_m"]
-        total_duration_s = primary["duration_s"]
-        avg_speed_kmh = (total_distance_m / total_duration_s * 3.6) if total_duration_s > 0 else 80.0
-
-        # 2. Elevation dọc theo polyline thật
+        dist_m = primary["distance_m"]
+        dur_s = primary["duration_s"]
+        avg_kmh = (dist_m / dur_s * 3.6) if dur_s > 0 else 80.0
         elevation_profile = fetch_elevation_profile(polyline, api_config, samples=100)
-
-        # 3. Nhiệt độ tại 3 điểm (đầu, giữa, cuối)
         mid = polyline[len(polyline) // 2]
-        sampled = [(origin_lat, origin_lng), mid, (dest_lat, dest_lng)]
-        temp_data = fetch_temperature_profile_along_route(sampled, api_config)
-        avg_temp_c = math.fsum(t["temperature_c"] for t in temp_data) / len(temp_data)
-
+        temp_data = fetch_temperature_profile_along_route(
+            [(olat, olng), mid, (dlat, dlng)], api_config,
+        )
+        avg_temp = math.fsum(t["temperature_c"] for t in temp_data) / len(temp_data)
     except APIIntegrationError as e:
         if not use_mock_on_failure:
             raise
-        print(f"[WARN] API failed ({e}). Using MOCK data.")
-        elevation_profile = generate_mock_elevation_profile(
-            origin_lat, origin_lng, dest_lat, dest_lng, num_points=20
+        print(f"[WARN] API failed ({e}). Using MOCK.")
+        elevation_profile = generate_mock_elevation_profile(olat, olng, dlat, dlng, 20)
+        avg_temp, avg_kmh, temp_data = -8.0, 80.0, []
+
+    from api_integration import _haversine_distance_m
+
+    def near_wind(lat, lng):
+        if not temp_data:
+            return {"wind_speed_mps": 0.0, "wind_direction_deg": 0.0}
+        return min(
+            temp_data,
+            key=lambda s: (s.get("lat", 0) - lat) ** 2 + (s.get("lng", 0) - lng) ** 2,
         )
-        avg_temp_c = -8.0
-        avg_speed_kmh = 80.0
 
-    # Chuyển elevation profile → RouteSegment
-    segments: List[RouteSegment] = []
+    segs = []
     for i in range(len(elevation_profile) - 1):
-        p1 = elevation_profile[i]
-        p2 = elevation_profile[i + 1]
-        from api_integration import _haversine_distance_m
-        dist_m = _haversine_distance_m(p1["lat"], p1["lng"], p2["lat"], p2["lng"])
-        if dist_m < 1.0:
+        p1, p2 = elevation_profile[i], elevation_profile[i + 1]
+        d = _haversine_distance_m(p1["lat"], p1["lng"], p2["lat"], p2["lng"])
+        if d < 1.0:
             continue
-        # p1["grade_percent"] đã là độ dốc đoạn p1→p2 (theo code API hiện tại)
-        segments.append(RouteSegment(
-            distance_m=dist_m,
-            avg_speed_kmh=avg_speed_kmh,
+        w = near_wind(p1["lat"], p1["lng"])
+        segs.append(RouteSegment(
+            distance_m=d, avg_speed_kmh=avg_kmh,
             grade_percent=p1.get("grade_percent", 0.0),
-            ambient_temp_c=avg_temp_c,
+            ambient_temp_c=w.get("temperature_c", avg_temp),
+            wind_speed_mps=w.get("wind_speed_mps", 0.0),
+            wind_dir_deg=w.get("wind_direction_deg", 0.0),
+            heading_deg=_bearing_deg(p1["lat"], p1["lng"], p2["lat"], p2["lng"]),
+            tire_pressure_bar=tire_pressure_bar, tire_type=tire_type,
+            tire_condition=tire_condition, road_surface=road_surface,
+            hvac_on=hvac_on, climate_target_c=climate_target_c,
+            regen_availability_pct=regen_availability_pct,
+            driving_mode=driving_mode, weather=weather,
+            traffic_density=traffic_density, towing=towing,
+            preconditioning=preconditioning,
+            elevation_m=p1.get("elevation_m", 0.0),
         ))
-
-    return RouteCandidate(route_name=route_name, description=description, segments=segments)
+    return RouteCandidate(route_name, segs, description)
 
 
 # ============================================================================
-# KHỐI TỰ KIỂM TRA — VÍ DỤ SO SÁNH 2 TUYẾN ĐƯỜNG (dữ liệu thủ công)
+# SELF-TEST
 # ============================================================================
 if __name__ == "__main__":
-    print("=== TEST: So sánh 2 tuyến đường mùa đông, -10°C ===\n")
+    print("=== TEST: 2 tuyến, baseline vs wind+wet ===\n")
 
-    # Tuyến 1: Đường trực tiếp qua đèo, ngắn nhưng dốc đứng
     route_direct = RouteCandidate(
-        route_name="Tuyến 1: Đường đèo trực tiếp",
-        description="Ngắn hơn nhưng có đoạn dốc lên tới 8%",
+        route_name="Tuyến 1: Đường đèo",
+        description="Ngắn nhưng dốc",
         segments=[
-            RouteSegment(distance_m=8000, avg_speed_kmh=60, grade_percent=8.0, ambient_temp_c=-10.0),
-            RouteSegment(distance_m=12000, avg_speed_kmh=70, grade_percent=5.0, ambient_temp_c=-10.0),
+            RouteSegment(distance_m=8000,  avg_speed_kmh=60, grade_percent=8.0,  ambient_temp_c=-10.0),
+            RouteSegment(distance_m=12000, avg_speed_kmh=70, grade_percent=5.0,  ambient_temp_c=-10.0),
             RouteSegment(distance_m=10000, avg_speed_kmh=80, grade_percent=-6.0, ambient_temp_c=-9.0),
-            RouteSegment(distance_m=5000, avg_speed_kmh=50, grade_percent=1.0, ambient_temp_c=-8.5),
+            RouteSegment(distance_m=5000,  avg_speed_kmh=50, grade_percent=1.0,  ambient_temp_c=-8.5),
         ],
     )
-
-    # Tuyến 2: Đường vòng xa hơn nhưng phẳng, qua thị trấn
     route_flat = RouteCandidate(
-        route_name="Tuyến 2: Đường vòng bằng phẳng",
-        description="Xa hơn nhưng gần như không dốc",
+        route_name="Tuyến 2: Đường vòng",
+        description="Xa nhưng phẳng",
         segments=[
-            RouteSegment(distance_m=15000, avg_speed_kmh=90, grade_percent=0.5, ambient_temp_c=-9.0),
+            RouteSegment(distance_m=15000, avg_speed_kmh=90, grade_percent=0.5,  ambient_temp_c=-9.0),
             RouteSegment(distance_m=18000, avg_speed_kmh=95, grade_percent=-0.5, ambient_temp_c=-9.5),
-            RouteSegment(distance_m=9000, avg_speed_kmh=70, grade_percent=1.0, ambient_temp_c=-8.0),
+            RouteSegment(distance_m=9000,  avg_speed_kmh=70, grade_percent=1.0,  ambient_temp_c=-8.0),
         ],
     )
 
     engine = RouteOptimizationEngine(battery_initial_temp_c=-9.0)
-    result = engine.compare_and_optimize([route_direct, route_flat])
 
-    print(result["explanation"])
+    print("--- BASELINE ---")
+    r1 = engine.compare_and_optimize([route_direct, route_flat])
+    for r in r1["all_results"]:
+        print(f"  {r['route_name']}: {r['total_energy_kwh']:.3f} kWh")
 
-    print("\n\n=== CHI TIẾT TỪNG TUYẾN (JSON-like) ===")
-    for r in result["all_results"]:
-        print(f"\n{r['route_name']}:")
-        print(f"  Tổng năng lượng: {r['total_energy_kwh']} kWh | % pin: {r['battery_percent_consumed']}%")
-        print(f"  Driving: {r['driving_energy_kwh']} kWh | Winter overhead: {r['winter_overhead_kwh']} kWh")
+    route_windy = RouteCandidate(
+        route_name="Tuyến 1 (wind+wet)",
+        description="Gió ngược + đường ướt + lốp non",
+        segments=[
+            dataclasses.replace(
+                s, wind_speed_mps=10.0, wind_dir_deg=180.0, heading_deg=0.0,
+                road_surface="wet", tire_pressure_bar=2.4,
+            ) for s in route_direct.segments
+        ],
+    )
+    print("\n--- WIND + WET on route 1 ---")
+    r2 = engine.compare_and_optimize([route_windy, route_flat])
+    for r in r2["all_results"]:
+        print(f"  {r['route_name']}: {r['total_energy_kwh']:.3f} kWh")
+    print(f"\n  → Impact: +{r2['all_results'][0]['total_energy_kwh'] - r1['all_results'][0]['total_energy_kwh']:.3f} kWh")
+
+    print("\n=== TEST: speed_curve + monte_carlo ===")
+    sc = engine.speed_curve(grade_percent=0.0, temp_c=-10.0)
+    print(f"  Optimal speed: {sc['v_opt_kmh']} km/h → {sc['kwh_per_km_opt']:.4f} kWh/km")
+    mc = engine.monte_carlo_route(route_direct, n_samples=100)
+    print(f"  MC: P10={mc['p10']:.2f} P50={mc['p50']:.2f} P90={mc['p90']:.2f}")
