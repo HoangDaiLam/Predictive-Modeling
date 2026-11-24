@@ -1,0 +1,16 @@
+{
+  "info": {
+    "name": "EV Synthetic Dataset API",
+    "description": "Read-only endpoint smoke tests and data access.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [{"key": "baseUrl", "value": "http://127.0.0.1:8000"}],
+  "item": [
+    {"name": "Health", "request": {"method": "GET", "url": "{{baseUrl}}/health"}},
+    {"name": "Schema", "request": {"method": "GET", "url": "{{baseUrl}}/schema"}},
+    {"name": "First page", "request": {"method": "GET", "url": "{{baseUrl}}/dataset?offset=0&limit=1000"}},
+    {"name": "Summary", "request": {"method": "GET", "url": "{{baseUrl}}/summary"}},
+    {"name": "Download CSV", "request": {"method": "GET", "url": "{{baseUrl}}/dataset.csv"}},
+    {"name": "Get sample", "request": {"method": "GET", "url": "{{baseUrl}}/dataset/TRIP-000001"}}
+  ]
+}
