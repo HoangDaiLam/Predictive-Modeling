@@ -1,0 +1,14 @@
+[
+  {"distance_km": 20, "speed_kmh": 50, "outside_temperature_c": 5, "battery_temperature_c": 12,
+   "tyre_pressure_bar": 2.5, "slope_grade_pct": 0.0, "traffic_situation": "medium",
+   "preconditioning": "off", "climate_settings": "medium", "road_condition": "dry",
+   "towing": "no", "historical_driving_pattern": "typical"},
+  {"distance_km": 60, "speed_kmh": 100, "outside_temperature_c": 4, "battery_temperature_c": 18,
+   "tyre_pressure_bar": 2.5, "slope_grade_pct": 0.5, "traffic_situation": "low",
+   "preconditioning": "off", "climate_settings": "medium", "road_condition": "dry",
+   "towing": "no", "historical_driving_pattern": "typical"},
+  {"distance_km": 30, "speed_kmh": 70, "outside_temperature_c": 3, "battery_temperature_c": 20,
+   "tyre_pressure_bar": 2.5, "slope_grade_pct": -0.5, "traffic_situation": "low",
+   "preconditioning": "off", "climate_settings": "medium", "road_condition": "wet",
+   "towing": "no", "historical_driving_pattern": "typical"}
+]
