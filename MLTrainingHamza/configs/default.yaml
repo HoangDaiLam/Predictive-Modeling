@@ -1,0 +1,14 @@
+# Overrides for ExperimentConfig. Any key omitted keeps its default.
+# Run with: evmlops train --config configs/default.yaml
+experiment_name: ev-energy-consumption
+group_column: vehicle_id
+test_size: 0.2
+cv_folds: 5
+n_search_iter: 12      # random-search trials per model
+n_bootstrap: 1000      # cluster bootstrap replicates
+n_jobs: 1
+random_state: 42
+register_best_model: true
+registered_model_name: ev-consumption-predictor
+log_search_trials: true
+candidates: [gradient_boosting, xgboost, lightgbm]

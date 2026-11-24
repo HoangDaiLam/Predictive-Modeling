@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evmlops"
+version = "1.1.0"
+description = "MLflow experiment module comparing gradient boosting, XGBoost and LightGBM for EV energy consumption."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mlflow>=3.0",
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "scikit-learn>=1.4",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+evmlops = "evmlops.cli:main"
+
+# Registers the themed tracking server so that `mlflow server --app-name prussian-gold` works.
+[project.entry-points."mlflow.app"]
+prussian-gold = "evmlops.ui.app:create_app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"evmlops.ui" = ["*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

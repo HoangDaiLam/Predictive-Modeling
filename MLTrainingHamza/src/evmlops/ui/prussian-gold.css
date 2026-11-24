@@ -1,0 +1,69 @@
+/*
+ * Prussian blue and gold accents for the MLflow tracking UI.
+ *
+ * Base blues are recoloured by palette.py. This sheet adds the gold accents
+ * and a few finishing touches. Selectors use attribute matches on the design
+ * system's class names so they work for both the light and dark themes and
+ * survive MLflow's hashed build output.
+ */
+
+:root {
+  --pg-prussian: #003153;
+  --pg-prussian-deep: #00243d;
+  --pg-prussian-mid: #1d4e7a;
+  --pg-gold: #c9a227;
+  --pg-gold-light: #e6c85c;
+  --pg-gold-text: #8a6d0b;
+  --pg-paper: #fbfaf6;
+}
+
+/* Text selection */
+::selection {
+  background: var(--pg-gold-light);
+  color: var(--pg-prussian-deep);
+}
+
+/* Keyboard focus: a visible gold ring everywhere */
+:focus-visible {
+  outline: 2px solid var(--pg-gold) !important;
+  outline-offset: 1px;
+}
+
+/* Active tab underline */
+[class*="-tabs-ink-bar"] {
+  background: var(--pg-gold) !important;
+}
+
+/* Primary buttons carry a thin gold base line */
+[class*="-btn-primary"]:not([disabled]):not([class*="-btn-dangerous"]) {
+  box-shadow: inset 0 -2px 0 var(--pg-gold);
+}
+
+/* Table header rule */
+[class*="-table-thead"] > tr > th {
+  border-bottom: 2px solid var(--pg-gold) !important;
+}
+
+/* Link hover in a darker gold that keeps text contrast on light backgrounds */
+.mlflow-ui-container a:hover {
+  color: var(--pg-gold-text);
+}
+
+/* Slim scrollbars with a gold thumb */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--pg-gold) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--pg-gold);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

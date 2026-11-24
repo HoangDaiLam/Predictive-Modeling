@@ -1,0 +1,41 @@
+{
+  "gradient_boosting": {
+    "best_params": {
+      "learning_rate": 0.05562762377167465,
+      "max_depth": 4,
+      "max_features": 0.6999304858576277,
+      "min_samples_leaf": 32,
+      "n_estimators": 287,
+      "subsample": 0.7465447373174767
+    },
+    "run_id": "b4196926acc44f54bd54ad30996bb1ff"
+  },
+  "xgboost": {
+    "best_params": {
+      "colsample_bytree": 0.8005575058716043,
+      "gamma": 0.21745470981373619,
+      "learning_rate": 0.02097077545038924,
+      "max_depth": 4,
+      "min_child_weight": 14.71797667306967,
+      "n_estimators": 613,
+      "reg_alpha": 0.00610149136730271,
+      "reg_lambda": 0.2820996133514491,
+      "subsample": 0.6733618039413735
+    },
+    "run_id": "a62e1eeb715f4e42b5b897cc2d07c447"
+  },
+  "lightgbm": {
+    "best_params": {
+      "colsample_bytree": 0.5442462510259598,
+      "learning_rate": 0.03140601675761342,
+      "min_child_samples": 71,
+      "min_split_gain": 0.011855644831670812,
+      "n_estimators": 537,
+      "num_leaves": 125,
+      "reg_alpha": 1.1627201204016835,
+      "reg_lambda": 0.7651053666754197,
+      "subsample": 0.7123738038749523
+    },
+    "run_id": "6268f6ecfd344e6787e480d1a29f07b2"
+  }
+}
